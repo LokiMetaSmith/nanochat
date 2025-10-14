@@ -177,7 +177,8 @@ def compute_init():
 def compute_cleanup():
     """Companion function to compute_init, to clean things up before script exit"""
     if is_ddp():
-        dist.destroy_process_group()
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 class DummyWandb:
     """Useful if we wish to not use wandb but have all the same signatures"""

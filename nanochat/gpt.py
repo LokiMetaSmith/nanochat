@@ -215,7 +215,6 @@ class GPT(nn.Module):
         # calculate the rotation frequencies at each (time, channel) pair
         freqs = torch.outer(t, inv_freq)
         cos, sin = freqs.cos(), freqs.sin()
-        # keep them in the default dtype (bfloat16 on GPU, float32 on CPU)
         rotary_dtype = self.transformer.wte.weight.dtype
         cos, sin = cos.to(dtype=rotary_dtype), sin.to(dtype=rotary_dtype)
         cos, sin = cos[None, :, None, :], sin[None, :, None, :] # add batch and head dims for later broadcasting
@@ -269,7 +268,6 @@ class GPT(nn.Module):
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim))
         assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
         assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
-        # Rotary embeddings should match the default dtype for the platform
         expected_dtype = self.transformer.wte.weight.dtype
         assert self.cos.dtype == expected_dtype, "Rotary embeddings dtype mismatch"
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache

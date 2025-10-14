@@ -21,49 +21,14 @@ dependencies = [
 requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
-# target torch to cuda 12.8 or CPU
-[project.optional-dependencies]
-cpu = [
-    "torch>=2.8.0",
-]
-gpu = [
-    "torch>=2.8.0",
-]
-rocm = [
-    "torch>=2.8.0",
-    "pytorch-triton-rocm==3.4.0; platform_machine == 'x86_64' and sys_platform == 'linux'",
-]
-dev = [
-    "maturin>=1.9.4",
-    "pytest>=8.0.0",
-]
-
-[tool.uv]
-conflicts = [
-  [
-    { extra = "cpu" },
-    { extra = "gpu" },
-  ],
-]
-
+# target torch to rocm 6.3
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cpu", extra = "cpu" },
-    { index = "pytorch-cu128", extra = "gpu" },
-    { index = "pytorch-rocm63", extra = "rocm" },
+    { index = "pytorch-rocm63" },
 ]
 pytorch-triton-rocm = [
-    { index = "pytorch-rocm63", extra = "rocm" },
+    { index = "pytorch-rocm63" },
 ]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
 
 [[tool.uv.index]]
 name = "pytorch-rocm63"
@@ -76,7 +41,11 @@ bindings = "pyo3"
 python-source = "."
 manifest-path = "rustbpe/Cargo.toml"
 
-
+[project.optional-dependencies]
+dev = [
+    "maturin>=1.9.4",
+    "pytest>=8.0.0",
+]
 
 [tool.pytest.ini_options]
 markers = [

@@ -76,7 +76,7 @@ grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
 print0(f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tokens_per_fwdbwd:,}")
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
-token_bytes = get_token_bytes()
+token_bytes = get_token_bytes(device=device)
 
 # Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
 optimizers = model.setup_optimizers(unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay)
@@ -215,7 +215,7 @@ while True:
     # -------------------------------------------------------------------------
     # single training step
     # evaluate the gradient
-    if torch.cuda.is_available(): torch.cuda.synchronize()
+    if device.type != 'cpu': torch.cuda.synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
@@ -236,7 +236,7 @@ while True:
     for opt in optimizers:
         opt.step()
     model.zero_grad(set_to_none=True)
-    if torch.cuda.is_available(): torch.cuda.synchronize()
+    if device.type != 'cpu': torch.cuda.synchronize()
     t1 = time.time()
     dt = t1 - t0
     # -------------------------------------------------------------------------
@@ -268,7 +268,7 @@ while True:
         })
 
 # print a few more stats
-if torch.cuda.is_available():
+if device.type != 'cpu':
     print0(f"Peak memory usage: {torch.cuda.max_memory_allocated(device=device) / 1024 / 1024:.2f}MiB")
 print0(f"Total training time: {total_training_time/60:.2f}m")
 print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
