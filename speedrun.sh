@@ -12,10 +12,6 @@
 
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
-# For newer AMD GPUs that are not yet officially supported by PyTorch ROCm builds,
-# we can override the detected GPU architecture to a compatible one.
-# For example, for a gfx1151 GPU, we can use gfx1100 (11.0.0).
-export HSA_OVERRIDE_GFX_VERSION=11.0.0
 NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 
@@ -26,8 +22,14 @@ mkdir -p $NANOCHAT_BASE_DIR
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 # create a .venv local virtual environment (if it doesn't exist)
 [ -d ".venv" ] || uv venv
-# install the repo dependencies
-uv sync
+# Check for NVIDIA GPU and select torch index accordingly
+if command -v nvidia-smi &> /dev/null; then
+    echo "NVIDIA GPU detected. Installing GPU-supported packages."
+    uv pip install -e .[gpu] --index-strategy unsafe-best-match
+else
+    echo "No NVIDIA GPU detected. Installing CPU-only packages."
+    uv pip install -e .[cpu] --index-strategy unsafe-best-match
+fi
 # activate venv so that `python` uses the project's venv instead of system python
 source .venv/bin/activate
 

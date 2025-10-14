@@ -16,7 +16,7 @@ import time
 import wandb
 import torch
 
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, resolve_autocast_dtype
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.loss_eval import evaluate_bpb
@@ -52,8 +52,9 @@ user_config = {k: globals()[k] for k in config_keys} # possibly useful for loggi
 # Compute init
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
 master_process = ddp_rank == 0
-dtype = torch.float32 if dtype == 'float32' else torch.bfloat16
-autocast_ctx = torch.amp.autocast(device_type=device.type, dtype=dtype)
+device_type = device.type
+autocast_dtype = resolve_autocast_dtype(device_type, dtype)
+autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=autocast_dtype)
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
@@ -75,7 +76,7 @@ grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
 print0(f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tokens_per_fwdbwd:,}")
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
-token_bytes = get_token_bytes(device=device)
+token_bytes = get_token_bytes()
 
 # Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
 optimizers = model.setup_optimizers(unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay)
@@ -214,7 +215,7 @@ while True:
     # -------------------------------------------------------------------------
     # single training step
     # evaluate the gradient
-    if device.type != 'cpu': torch.cuda.synchronize()
+    if torch.cuda.is_available(): torch.cuda.synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
@@ -235,7 +236,7 @@ while True:
     for opt in optimizers:
         opt.step()
     model.zero_grad(set_to_none=True)
-    if device.type != 'cpu': torch.cuda.synchronize()
+    if torch.cuda.is_available(): torch.cuda.synchronize()
     t1 = time.time()
     dt = t1 - t0
     # -------------------------------------------------------------------------
@@ -267,7 +268,7 @@ while True:
         })
 
 # print a few more stats
-if device.type != 'cpu':
+if torch.cuda.is_available():
     print0(f"Peak memory usage: {torch.cuda.max_memory_allocated(device=device) / 1024 / 1024:.2f}MiB")
 print0(f"Total training time: {total_training_time/60:.2f}m")
 print0(f"Minimum validation bpb: {min_val_bpb:.4f}")

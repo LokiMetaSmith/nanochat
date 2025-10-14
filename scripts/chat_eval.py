@@ -14,7 +14,7 @@ from functools import partial
 import torch
 import torch.distributed as dist
 
-from nanochat.common import compute_init, compute_cleanup, get_dist_info, print0
+from nanochat.common import compute_init, compute_cleanup, get_dist_info, print0, resolve_autocast_dtype
 from nanochat.checkpoint_manager import load_model
 from nanochat.engine import Engine
 
@@ -194,8 +194,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
-    ptdtype = torch.float32 if args.dtype == 'float32' else torch.bfloat16
-    autocast_ctx = torch.amp.autocast(device_type=device.type, dtype=ptdtype)
+    device_type = device.type
+    autocast_dtype = resolve_autocast_dtype(device_type, args.dtype)
+    autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=autocast_dtype)
 
     model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
     engine = Engine(model, tokenizer)
