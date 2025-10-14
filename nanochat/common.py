@@ -87,11 +87,12 @@ def is_macos():
 
 
 def get_device_type():
-    """Get the device type string for autocast: 'cuda' or 'cpu'."""
-    # Use CPU if on macOS or if CUDA is not available
-    if is_macos() or not torch.cuda.is_available():
-        return "cpu"
-    return "cuda"
+    """Get the device type string for autocast: 'cuda', 'rocm', or 'cpu'."""
+    if torch.cuda.is_available():
+        if hasattr(torch.version, 'hip') and torch.version.hip:
+            return "rocm"
+        return "cuda"
+    return "cpu"
 
 
 def resolve_autocast_dtype(device_type: str, requested_dtype: str | torch.dtype | None=None) -> torch.dtype:
@@ -138,40 +139,37 @@ def get_dist_info():
 def compute_init():
     """Basic initialization that we keep doing over and over, so make common."""
 
-    # Check if CUDA is available
-    has_cuda = torch.cuda.is_available()
-    on_macos = is_macos()
+    # Detect hardware
+    device_type = get_device_type()
+    if device_type == "rocm":
+        backend = "rccl"
+    elif device_type == "cuda":
+        backend = "nccl"
+    else: # cpu
+        backend = "gloo"
 
     # Reproducibility
     torch.manual_seed(42)
-    if has_cuda:
-        torch.cuda.manual_seed(42)
-    # skipping full reproducibility for now, possibly investigate slowdown later
-    # torch.use_deterministic_algorithms(True)
-    # torch.backends.cudnn.deterministic = True
+    if device_type != "cpu":
+        torch.cuda.manual_seed(42) # works for rocm too
+
+    # Precision
+    if device_type == 'cuda':
+        torch.set_float32_matmul_precision("high") # uses tf32 instead of fp32 for matmuls
 
     # Distributed setup: Distributed Data Parallel (DDP), optional
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     if ddp:
-        # Determine device
-        if on_macos or not has_cuda:
-            device = torch.device("cpu")
-            if on_macos:
-                logger.info("Running on macOS with CPU")
-            else:
-                logger.info("Running on CPU (CUDA not available)")
-            logger.warning("DDP requested but will run on CPU")
-        else: # has_cuda and not on_macos
-            device = torch.device("cuda", ddp_local_rank)
+        device = torch.device(device_type, ddp_local_rank)
+        if device_type != "cpu":
             torch.cuda.set_device(device) # make "cuda" default to this device
-            dist.init_process_group(backend="nccl", device_id=device)
-            dist.barrier()
-            logger.info(f"Running on CUDA with DDP (rank {ddp_rank}/{ddp_world_size})")
-    else: # not ddp
-        device = torch.device("cuda" if has_cuda and not on_macos else "cpu")
-        logger.info(f"Running on {'CUDA (single GPU)' if has_cuda and not on_macos else 'CPU'}")
+        dist.init_process_group(backend=backend, device_id=device if device_type != "cpu" else None)
+        dist.barrier()
+    else:
+        device = torch.device(device_type)
 
     if ddp_rank == 0:
+        logger.info(f"Using device: {device}")
         logger.info(f"Distributed world size: {ddp_world_size}")
 
     return ddp, ddp_rank, ddp_local_rank, ddp_world_size, device

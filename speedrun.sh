@@ -25,13 +25,15 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 # Check for NVIDIA GPU and select torch index accordingly
 if command -v nvidia-smi &> /dev/null; then
     echo "NVIDIA GPU detected. Installing GPU-supported packages."
-    uv pip install -e .[gpu] --index-strategy unsafe-best-match
+    uv pip install -e .[gpu,dev] --index-strategy unsafe-best-match
+elif command -v rocm-smi &> /dev/null; then
+    echo "ROCm detected. Installing ROCm-supported packages."
+    uv pip install -e .[rocm,dev] --index-strategy unsafe-best-match
 else
-    echo "No NVIDIA GPU detected. Installing CPU-only packages."
-    uv pip install -e .[cpu] --index-strategy unsafe-best-match
+    echo "No NVIDIA GPU or ROCm detected. Installing CPU-only packages."
+    uv pip install -e .[cpu,dev] --index-strategy unsafe-best-match
 fi
-# activate venv so that `python` uses the project's venv instead of system python
-source .venv/bin/activate
+PYTHON_EXE=$(pwd)/.venv/bin/python
 
 # -----------------------------------------------------------------------------
 # wandb setup
@@ -49,7 +51,7 @@ fi
 # During the course of the run, we will be writing markdown reports to the report/
 # directory in the base dir. This command clears it out and writes a header section
 # with a bunch of system info and a timestamp that marks the start of the run.
-python -m nanochat.report reset
+$PYTHON_EXE -m nanochat.report reset
 
 # -----------------------------------------------------------------------------
 # Tokenizer
@@ -66,15 +68,15 @@ uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 # each data shard is ~250M chars
 # so we download 2e9 / 250e6 = 8 data shards at this point
 # each shard is ~100MB of text (compressed), so this is about ~800MB of data on disk
-python -m nanochat.dataset -n 8
+$PYTHON_EXE -m nanochat.dataset -n 8
 # Immediately also kick off downloading more shards in the background while tokenizer trains
 # See comment below for why 240 is the right number here
-python -m nanochat.dataset -n 240 &
+$PYTHON_EXE -m nanochat.dataset -n 240 &
 DATASET_DOWNLOAD_PID=$!
 # train the tokenizer with vocab size 2**16 = 65536 on ~2B characters of data
-python -m scripts.tok_train --max_chars=2000000000
+$PYTHON_EXE -m scripts.tok_train --max_chars=2000000000
 # evaluate the tokenizer (report compression ratio etc.)
-python -m scripts.tok_eval
+$PYTHON_EXE -m scripts.tok_eval
 
 # -----------------------------------------------------------------------------
 # Base model (pretraining)
@@ -98,25 +100,25 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # pretrain the d20 model
-python -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
+$PYTHON_EXE -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
 # evaluate the model on a larger chunk of train/val data and draw some samples
-python -m scripts.base_loss
+$PYTHON_EXE -m scripts.base_loss
 # evaluate the model on CORE tasks
-python -m scripts.base_eval
+$PYTHON_EXE -m scripts.base_eval
 
 # -----------------------------------------------------------------------------
 # Midtraining (teach the model conversation special tokens, tool use, multiple choice)
 
 # run midtraining and eval the model
-python -m scripts.mid_train --run=$WANDB_RUN
-python -m scripts.chat_eval -i mid
+$PYTHON_EXE -m scripts.mid_train --run=$WANDB_RUN
+$PYTHON_EXE -m scripts.chat_eval -i mid
 
 # -----------------------------------------------------------------------------
 # Supervised Finetuning (domain adaptation to each sequence all by itself per row)
 
 # train sft and re-eval right away (should see a small bump)
-python -m scripts.chat_sft --run=$WANDB_RUN
-python -m scripts.chat_eval -i sft
+$PYTHON_EXE -m scripts.chat_sft --run=$WANDB_RUN
+$PYTHON_EXE -m scripts.chat_eval -i sft
 
 # chat with the model over CLI! Leave out the -p to chat interactively
 # python -m scripts.chat_cli -p "Why is the sky blue?"
@@ -129,11 +131,11 @@ python -m scripts.chat_eval -i sft
 # (optional)
 
 # run reinforcement learning
-# python -m scripts.chat_rl -- --run=$WANDB_RUN
+# $PYTHON_EXE -m scripts.chat_rl -- --run=$WANDB_RUN
 # eval the RL model only on GSM8K
-# python -m scripts.chat_eval -- -i rl -a GSM8K
+# $PYTHON_EXE -m scripts.chat_eval -- -i rl -a GSM8K
 
 # -----------------------------------------------------------------------------
 # Generate the full report by putting together all the sections
 # report.md is the output and will be copied to current directory for convenience
-python -m nanochat.report generate
+$PYTHON_EXE -m nanochat.report generate
