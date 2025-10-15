@@ -39,7 +39,7 @@ steps = split_tokens // tokens_per_step
 token_bytes = get_token_bytes(device=device)
 bpb_results = {}
 for split_name in ["train", "val"]:
-    loader = tokenizing_distributed_data_loader(device_batch_size, sequence_len, split_name, device=device)
+    loader = tokenizing_distributed_data_loader(device_batch_size, sequence_len, split_name)
     with autocast_ctx:
         bpb = evaluate_bpb(model, loader, steps, token_bytes)
     print0(f"{split_name} bpb: {bpb:.4f}")
