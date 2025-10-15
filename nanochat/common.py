@@ -159,14 +159,15 @@ def compute_init():
 
     # Distributed setup: Distributed Data Parallel (DDP), optional
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
+    torch_device_str = "cuda" if device_type in ("cuda", "rocm") else "cpu"
     if ddp:
-        device = torch.device(device_type, ddp_local_rank)
+        device = torch.device(torch_device_str, ddp_local_rank)
         if device_type != "cpu":
             torch.cuda.set_device(device) # make "cuda" default to this device
         dist.init_process_group(backend=backend, device_id=device if device_type != "cpu" else None)
         dist.barrier()
     else:
-        device = torch.device(device_type)
+        device = torch.device(torch_device_str)
 
     if ddp_rank == 0:
         logger.info(f"Using device: {device}")
