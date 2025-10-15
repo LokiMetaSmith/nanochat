@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # This script is the "Best ChatGPT clone that $100 can buy",
 # It is designed to run in ~4 hours on 8XH100 node at $3/GPU/hour.
@@ -12,20 +13,45 @@
 
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
+# For newer AMD GPUs that are not yet officially supported by PyTorch ROCm builds,
+# we can override the detected GPU architecture to a compatible one.
+# For example, for a gfx1151 GPU, we can use gfx1100 (11.0.0).
+export HSA_OVERRIDE_GFX_VERSION=11.0.0
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
+
 mkdir -p $NANOCHAT_BASE_DIR
 
 # -----------------------------------------------------------------------------
 # Python venv setup with uv
 
 # install uv (if not already installed)
-command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+command -v uv &> /dev/null || (curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH")
 # create a .venv local virtual environment (if it doesn't exist)
 [ -d ".venv" ] || uv venv
-# install the repo dependencies
-uv sync
 # activate venv so that `python` uses the project's venv instead of system python
 source .venv/bin/activate
+
+# --- PyTorch Installation ---
+echo "🔍 Detecting hardware..."
+
+if command -v nvidia-smi &> /dev/null; then
+    echo "✅ NVIDIA GPU detected. Installing PyTorch for CUDA."
+    uv pip install torch>=2.8.0 --extra-index-url https://download.pytorch.org/whl/cu128
+elif command -v rocm-smi &> /dev/null; then
+    echo "✅ AMD GPU detected. Installing PyTorch for ROCm."
+    uv pip install torch>=2.8.0 pytorch-triton-rocm==3.4.0 --extra-index-url https://download.pytorch.org/whl/rocm6.3
+else
+    echo "🤷 No GPU detected. Installing CPU-only PyTorch."
+    uv pip install torch>=2.8.0
+fi
+
+echo "✅ PyTorch installation complete."
+
+# --- Project Installation ---
+echo "🚀 Installing nanochat project dependencies..."
+uv pip install -e .[dev]
+
+echo "✨ Setup complete!"
 
 # -----------------------------------------------------------------------------
 # wandb setup
@@ -50,7 +76,7 @@ python -m nanochat.report reset
 
 # Install Rust / Cargo
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source "$HOME/.cargo/env"
+. "$HOME/.cargo/env"
 
 # Build the rustbpe Tokenizer
 uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
@@ -92,25 +118,25 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # pretrain the d20 model
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
+python -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
 # evaluate the model on a larger chunk of train/val data and draw some samples
-torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
+python -m scripts.base_loss
 # evaluate the model on CORE tasks
-torchrun --standalone --nproc_per_node=8 -m scripts.base_eval
+python -m scripts.base_eval
 
 # -----------------------------------------------------------------------------
 # Midtraining (teach the model conversation special tokens, tool use, multiple choice)
 
 # run midtraining and eval the model
-torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i mid
+python -m scripts.mid_train --run=$WANDB_RUN
+python -m scripts.chat_eval -i mid
 
 # -----------------------------------------------------------------------------
 # Supervised Finetuning (domain adaptation to each sequence all by itself per row)
 
 # train sft and re-eval right away (should see a small bump)
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
+python -m scripts.chat_sft --run=$WANDB_RUN
+python -m scripts.chat_eval -i sft
 
 # chat with the model over CLI! Leave out the -p to chat interactively
 # python -m scripts.chat_cli -p "Why is the sky blue?"
@@ -123,9 +149,9 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
 # (optional)
 
 # run reinforcement learning
-# torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=$WANDB_RUN
+# python -m scripts.chat_rl -- --run=$WANDB_RUN
 # eval the RL model only on GSM8K
-# torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i rl -a GSM8K
+# python -m scripts.chat_eval -- -i rl -a GSM8K
 
 # -----------------------------------------------------------------------------
 # Generate the full report by putting together all the sections
