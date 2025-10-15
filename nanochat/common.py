@@ -87,10 +87,8 @@ def is_macos():
 
 
 def get_device_type():
-    """Get the device type string for autocast: 'cuda', 'rocm', or 'cpu'."""
+    """Get the device type string for autocast: 'cuda' or 'cpu'."""
     if torch.cuda.is_available():
-        if hasattr(torch.version, 'hip') and torch.version.hip:
-            return "rocm"
         return "cuda"
     return "cpu"
 
@@ -141,12 +139,10 @@ def compute_init():
 
     # Detect hardware
     device_type = get_device_type()
-    if device_type == "rocm":
+    if hasattr(torch.version, 'hip') and torch.version.hip:
         backend = "rccl"
-    elif device_type == "cuda":
-        backend = "nccl"
-    else: # cpu
-        backend = "gloo"
+    else:
+        backend = "nccl" if device_type == "cuda" else "gloo"
 
     # Reproducibility
     torch.manual_seed(42)
@@ -154,7 +150,7 @@ def compute_init():
         torch.cuda.manual_seed(42) # works for rocm too
 
     # Precision
-    if device_type == 'cuda':
+    if device_type == 'cuda' and not (hasattr(torch.version, 'hip') and torch.version.hip):
         torch.set_float32_matmul_precision("high") # uses tf32 instead of fp32 for matmuls
 
     # Distributed setup: Distributed Data Parallel (DDP), optional
