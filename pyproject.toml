@@ -3,7 +3,7 @@ name = "nanochat"
 version = "0.1.0"
 description = "the minimal full-stack ChatGPT clone"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "datasets>=4.0.0",
     "fastapi>=0.117.1",
@@ -23,18 +23,18 @@ dependencies = [
 requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
-# target torch to rocm 6.4
+# target torch to rocm 7.1
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-rocm64" },
+    { index = "pytorch-rocm71" },
 ]
 pytorch-triton-rocm = [
-    { index = "pytorch-rocm64" },
+    { index = "pytorch-rocm71" },
 ]
 
 [[tool.uv.index]]
-name = "pytorch-rocm64"
-url = "https://download.pytorch.org/whl/rocm6.4"
+name = "pytorch-rocm71"
+url = "https://download.pytorch.org/whl/rocm7.1"
 explicit = true
 
 [tool.maturin]
