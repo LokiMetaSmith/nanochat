@@ -1,5 +1,4 @@
 #!/bin/bash
-set -e
 
 # This script is the "Best ChatGPT clone that $100 can buy",
 # It is designed to run in ~4 hours on 8XH100 node at $3/GPU/hour.
@@ -16,7 +15,7 @@ export OMP_NUM_THREADS=1
 # For newer AMD GPUs that are not yet officially supported by PyTorch ROCm builds,
 # we can override the detected GPU architecture to a compatible one.
 # For example, for a gfx1151 GPU, we can use gfx1100 (11.0.0).
-export HSA_OVERRIDE_GFX_VERSION=11.0.0
+# export HSA_OVERRIDE_GFX_VERSION=11.0.0
 NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 
@@ -24,33 +23,13 @@ mkdir -p $NANOCHAT_BASE_DIR
 # Python venv setup with uv
 
 # install uv (if not already installed)
-command -v uv &> /dev/null || (curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH")
+command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 # create a .venv local virtual environment (if it doesn't exist)
 [ -d ".venv" ] || uv venv
+# install the repo dependencies
+uv sync
 # activate venv so that `python` uses the project's venv instead of system python
 source .venv/bin/activate
-
-# --- PyTorch Installation ---
-echo "🔍 Detecting hardware..."
-
-if command -v nvidia-smi &> /dev/null; then
-    echo "✅ NVIDIA GPU detected. Installing PyTorch for CUDA."
-    uv pip install torch>=2.8.0 --extra-index-url https://download.pytorch.org/whl/cu128
-elif command -v rocm-smi &> /dev/null; then
-    echo "✅ AMD GPU detected. Installing PyTorch for ROCm."
-    uv pip install torch>=2.8.0 pytorch-triton-rocm==3.4.0 --extra-index-url https://download.pytorch.org/whl/rocm6.3
-else
-    echo "🤷 No GPU detected. Installing CPU-only PyTorch."
-    uv pip install torch>=2.8.0
-fi
-
-echo "✅ PyTorch installation complete."
-
-# --- Project Installation ---
-echo "🚀 Installing nanochat project dependencies..."
-uv pip install -e .[dev]
-
-echo "✨ Setup complete!"
 
 # -----------------------------------------------------------------------------
 # wandb setup
@@ -75,7 +54,7 @@ python -m nanochat.report reset
 
 # Install Rust / Cargo
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-. "$HOME/.cargo/env"
+source "$HOME/.cargo/env"
 
 # Build the rustbpe Tokenizer
 uv run maturin develop --release --manifest-path rustbpe/Cargo.toml

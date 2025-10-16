@@ -79,50 +79,6 @@ def is_ddp():
     # TODO is there a proper way
     return int(os.environ.get('RANK', -1)) != -1
 
-
-def is_macos():
-    """Check if running on macOS."""
-    import platform
-    return platform.system() == "Darwin"
-
-
-def get_device_type():
-    """Get the device type string for autocast: 'cuda' or 'cpu'."""
-    if torch.cuda.is_available():
-        return "cuda"
-    return "cpu"
-
-
-def resolve_autocast_dtype(device_type: str, requested_dtype: str | torch.dtype | None=None) -> torch.dtype:
-    """Return a safe autocast dtype for the given device."""
-    if isinstance(requested_dtype, torch.dtype):
-        dtype = requested_dtype
-    elif isinstance(requested_dtype, str):
-        key = requested_dtype.lower()
-        if key in ("bfloat16", "bf16"):
-            dtype = torch.bfloat16
-        elif key in ("float16", "fp16", "half"):
-            dtype = torch.float16
-        elif key in ("float32", "fp32"):
-            dtype = torch.float32
-        else:
-            raise ValueError(f"Unsupported dtype string: {requested_dtype}")
-    elif requested_dtype is None:
-        dtype = torch.bfloat16 if device_type == "cuda" else torch.float32
-    else:
-        raise TypeError(f"Unsupported dtype specifier type: {type(requested_dtype)!r}")
-
-    if device_type != "cuda" and dtype != torch.float32:
-        logger.warning(
-            "Falling back to float32 autocast on %s (requested %s unsupported)",
-            device_type,
-            dtype,
-        )
-        dtype = torch.float32
-
-    return dtype
-
-
 def get_dist_info():
     if is_ddp():
         assert all(var in os.environ for var in ['RANK', 'LOCAL_RANK', 'WORLD_SIZE'])
@@ -133,16 +89,22 @@ def get_dist_info():
     else:
         return False, 0, 0, 1
 
-
 def compute_init():
     """Basic initialization that we keep doing over and over, so make common."""
 
     # Detect hardware
-    device_type = get_device_type()
-    if hasattr(torch.version, 'hip') and torch.version.hip:
+    if hasattr(torch.version, 'hip') and torch.version.hip and torch.cuda.is_available():
+        device_type = "cuda" # ROCm uses cuda naming in torch
         backend = "rccl"
+    elif torch.cuda.is_available():
+        device_type = "cuda"
+        backend = "nccl"
+    elif torch.xpu.is_available():
+        device_type = "xpu"
+        backend = "ccl"
     else:
-        backend = "nccl" if device_type == "cuda" else "gloo"
+        device_type = "cpu"
+        backend = "gloo"
 
     # Reproducibility
     torch.manual_seed(42)
@@ -150,8 +112,7 @@ def compute_init():
         torch.cuda.manual_seed(42) # works for rocm too
 
     # Precision
-    if device_type == 'cuda' and not (hasattr(torch.version, 'hip') and torch.version.hip):
-        torch.set_float32_matmul_precision("high") # uses tf32 instead of fp32 for matmuls
+    torch.set_float32_matmul_precision("high") # uses tf32 instead of fp32 for matmuls
 
     # Distributed setup: Distributed Data Parallel (DDP), optional
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
@@ -173,8 +134,7 @@ def compute_init():
 def compute_cleanup():
     """Companion function to compute_init, to clean things up before script exit"""
     if is_ddp():
-        if dist.is_initialized():
-            dist.destroy_process_group()
+        dist.destroy_process_group()
 
 class DummyWandb:
     """Useful if we wish to not use wandb but have all the same signatures"""

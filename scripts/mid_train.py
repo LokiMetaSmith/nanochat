@@ -16,7 +16,7 @@ import time
 import wandb
 import torch
 
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, resolve_autocast_dtype
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.loss_eval import evaluate_bpb
@@ -52,9 +52,8 @@ user_config = {k: globals()[k] for k in config_keys} # possibly useful for loggi
 # Compute init
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
 master_process = ddp_rank == 0
-device_type = device.type
-autocast_dtype = resolve_autocast_dtype(device_type, dtype)
-autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=autocast_dtype)
+dtype = torch.float32 if dtype == 'float32' else torch.bfloat16
+autocast_ctx = torch.amp.autocast(device_type=device.type, dtype=dtype)
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
