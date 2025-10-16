@@ -112,7 +112,7 @@ def compute_init():
         torch.cuda.manual_seed(42) # works for rocm too
 
     # Precision
-    torch.set_float32_matmul_precision("high") # uses tf32 instead of fp32 for matmuls
+    torch.backends.cuda.matmul.fp32_precision = 'high' # uses tf32 instead of fp32 for matmuls
 
     # Distributed setup: Distributed Data Parallel (DDP), optional
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()

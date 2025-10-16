@@ -97,7 +97,7 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # pretrain the d20 model
-python -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
+python -m scripts.base_train -- --depth=20 --run=$WANDB_RUN --device_batch_size=16
 # evaluate the model on a larger chunk of train/val data and draw some samples
 python -m scripts.base_loss
 # evaluate the model on CORE tasks
@@ -107,7 +107,7 @@ python -m scripts.base_eval
 # Midtraining (teach the model conversation special tokens, tool use, multiple choice)
 
 # run midtraining and eval the model
-python -m scripts.mid_train --run=$WANDB_RUN
+python -m scripts.mid_train --run=$WANDB_RUN --device_batch_size=16
 python -m scripts.chat_eval -i mid
 
 # -----------------------------------------------------------------------------
