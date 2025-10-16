@@ -95,7 +95,7 @@ def compute_init():
     # Detect hardware
     if hasattr(torch.version, 'hip') and torch.version.hip and torch.cuda.is_available():
         device_type = "cuda" # ROCm uses cuda naming in torch
-        backend = "rccl"
+        backend = "nccl"
     elif torch.cuda.is_available():
         device_type = "cuda"
         backend = "nccl"
