@@ -34,24 +34,14 @@ fi
 PYTHON_EXE=$(pwd)/.venv/bin/python
 
 # --- PyTorch Installation ---
-echo "🔍 Detecting hardware..."
-
-if command -v nvidia-smi &> /dev/null; then
-    echo "✅ NVIDIA GPU detected. Installing PyTorch for CUDA."
-    uv pip install torch>=2.8.0 --extra-index-url https://download.pytorch.org/whl/cu128
-elif command -v rocm-smi &> /dev/null; then
-    echo "✅ AMD GPU detected. Installing PyTorch for ROCm."
-    uv pip install torch>=2.8.0 --extra-index-url https://download.pytorch.org/whl/rocm6.4
-else
-    echo "🤷 No GPU detected. Installing CPU-only PyTorch."
-    uv pip install torch>=2.8.0
-fi
+echo "🚀 Installing PyTorch for ROCm 7.0..."
+$PYTHON_EXE -m uv pip install torch-rocm==2.8.0 --extra-index-url https://download.pytorch.org/whl/rocm7.0
 
 echo "✅ PyTorch installation complete."
 
 # --- Project Installation ---
 echo "🚀 Installing nanochat project dependencies..."
-uv pip install -e .[dev]
+$PYTHON_EXE -m uv pip install -e .[dev]
 
 echo "✨ Setup complete!"
 

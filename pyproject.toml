@@ -21,17 +21,6 @@ dependencies = [
 requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
-# target torch to rocm 6.4
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-rocm64" },
-]
-
-[[tool.uv.index]]
-name = "pytorch-rocm64"
-url = "https://download.pytorch.org/whl/rocm6.4"
-explicit = true
-
 [tool.maturin]
 module-name = "rustbpe"
 bindings = "pyo3"
