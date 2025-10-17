@@ -41,7 +41,7 @@ if command -v nvidia-smi &> /dev/null; then
     uv pip install torch>=2.8.0 --extra-index-url https://download.pytorch.org/whl/cu128
 elif command -v rocm-smi &> /dev/null; then
     echo "✅ AMD GPU detected. Installing PyTorch for ROCm."
-    uv pip install torch==2.7.1 --extra-index-url https://download.pytorch.org/whl/rocm7.0
+    uv pip install torch>=2.8.0 --extra-index-url https://download.pytorch.org/whl/rocm6.4
 else
     echo "🤷 No GPU detected. Installing CPU-only PyTorch."
     uv pip install torch>=2.8.0
