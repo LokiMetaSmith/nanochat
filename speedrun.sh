@@ -25,7 +25,10 @@ mkdir -p $NANOCHAT_BASE_DIR
 # Python venv setup with uv
 
 # install uv (if not already installed)
-command -v uv &> /dev/null || (curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH")
+if ! command -v uv &> /dev/null; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+fi
 # create a .venv local virtual environment (if it doesn't exist)
 [ -d ".venv" ] || uv venv
 PYTHON_EXE=$(pwd)/.venv/bin/python
@@ -35,20 +38,20 @@ echo "🔍 Detecting hardware..."
 
 if command -v nvidia-smi &> /dev/null; then
     echo "✅ NVIDIA GPU detected. Installing PyTorch for CUDA."
-    $PYTHON_EXE -m uv pip install torch>=2.8.0 --extra-index-url https://download.pytorch.org/whl/cu128
+    uv pip install torch>=2.8.0 --extra-index-url https://download.pytorch.org/whl/cu128
 elif command -v rocm-smi &> /dev/null; then
     echo "✅ AMD GPU detected. Installing PyTorch for ROCm."
-    $PYTHON_EXE -m uv pip install torch>=2.8.0 pytorch-triton-rocm==3.5.0 --extra-index-url https://download.pytorch.org/whl/rocm7.1
+    uv pip install torch>=2.8.0 pytorch-triton-rocm==3.5.0 --extra-index-url https://download.pytorch.org/whl/rocm7.1
 else
     echo "🤷 No GPU detected. Installing CPU-only PyTorch."
-    $PYTHON_EXE -m uv pip install torch>=2.8.0
+    uv pip install torch>=2.8.0
 fi
 
 echo "✅ PyTorch installation complete."
 
 # --- Project Installation ---
 echo "🚀 Installing nanochat project dependencies..."
-$PYTHON_EXE -m uv pip install -e .[dev]
+uv pip install -e .[dev]
 
 echo "✨ Setup complete!"
 
