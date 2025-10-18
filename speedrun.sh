@@ -56,10 +56,9 @@ python -m scripts.tok_eval
 # Download the eval_bundle from s3 to evaluate CORE metric during training (~162MB)
 EVAL_BUNDLE_URL=https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip
 if [ ! -d "$NANOCHAT_BASE_DIR/eval_bundle" ]; then
-    curl -L -o eval_bundle.zip $EVAL_BUNDLE_URL
-    unzip -q eval_bundle.zip
-    rm eval_bundle.zip
-    mv eval_bundle $NANOCHAT_BASE_DIR
+    curl -L -o "$NANOCHAT_BASE_DIR/eval_bundle.zip" $EVAL_BUNDLE_URL
+    unzip -q "$NANOCHAT_BASE_DIR/eval_bundle.zip" -d "$NANOCHAT_BASE_DIR"
+    rm "$NANOCHAT_BASE_DIR/eval_bundle.zip"
 fi
 
 # The d20 model is 561M parameters.
