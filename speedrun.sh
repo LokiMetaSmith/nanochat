@@ -36,22 +36,29 @@ PYTHON_EXE=$(pwd)/.venv/bin/python
 # --- PyTorch Installation ---
 echo "🔍 Detecting hardware..."
 
+# Uninstall any existing torch versions first
+$PYTHON_EXE -m uv pip uninstall -y torch torchvision torchaudio
+
 if command -v nvidia-smi &> /dev/null; then
     echo "✅ NVIDIA GPU detected. Installing PyTorch for CUDA."
-    uv pip install torch>=2.8.0 --extra-index-url https://download.pytorch.org/whl/cu128
+    $PYTHON_EXE -m uv pip install torch>=2.8.0 --extra-index-url https://download.pytorch.org/whl/cu128
 elif command -v rocm-smi &> /dev/null; then
     echo "✅ AMD GPU detected. Installing PyTorch for ROCm."
-    uv pip install torch==2.7.1 --extra-index-url https://download.pytorch.org/whl/rocm7.0
+    $PYTHON_EXE -m uv pip install torch==2.7.1 --extra-index-url https://download.pytorch.org/whl/rocm7.0
 else
     echo "🤷 No GPU detected. Installing CPU-only PyTorch."
-    uv pip install torch>=2.8.0
+    $PYTHON_EXE -m uv pip install torch>=2.8.0
 fi
 
-echo "✅ PyTorch installation complete."
+# Verify the installation
+echo "✅ PyTorch installation complete. Verifying installation..."
+$PYTHON_EXE -c "import torch; assert torch.cuda.is_available(), 'PyTorch CUDA not available'; print('PyTorch version:', torch.__version__); print('Has HIP:', hasattr(torch.version, 'hip') and torch.version.hip is not None)"
+
+echo "✅ PyTorch installation verified."
 
 # --- Project Installation ---
 echo "🚀 Installing nanochat project dependencies..."
-uv pip install -e .[dev]
+$PYTHON_EXE -m uv pip install -e .[dev]
 
 echo "✨ Setup complete!"
 
