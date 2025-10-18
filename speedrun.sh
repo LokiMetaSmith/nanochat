@@ -37,7 +37,7 @@ PYTHON_EXE=$(pwd)/.venv/bin/python
 echo "🔍 Detecting hardware..."
 
 # Uninstall any existing torch versions first
-uv pip uninstall -y torch torchvision torchaudio
+uv pip uninstall torch torchvision torchaudio || true
 
 if command -v nvidia-smi &> /dev/null; then
     echo "✅ NVIDIA GPU detected. Installing PyTorch for CUDA."
