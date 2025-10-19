@@ -147,95 +147,69 @@ class HuggingFaceTokenizer:
         print(f"Saved tokenizer to {tokenizer_path}")
 
 # -----------------------------------------------------------------------------
-# Tokenizer based on rustbpe + tiktoken combo
-import pickle
-import rustbpe
-import tiktoken
+# Tokenizer based on minbpe
+from .minbpe.regex import RegexTokenizer
 
-class RustBPETokenizer:
-    """Light wrapper around tiktoken (for efficient inference) but train with rustbpe"""
+class MinBPETokenizer:
+    """Light wrapper around minbpe RegexTokenizer"""
 
-    def __init__(self, enc, bos_token):
-        self.enc = enc
-        self.bos_token_id = self.encode_special(bos_token)
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+        self.bos_token_id = self.encode_special("<|bos|>")
 
     @classmethod
     def train_from_iterator(cls, text_iterator, vocab_size):
-        # 1) train using rustbpe
-        tokenizer = rustbpe.Tokenizer()
-        # the special tokens are inserted later in __init__, we don't train them here
-        vocab_size_no_special = vocab_size - len(SPECIAL_TOKENS)
-        assert vocab_size_no_special >= 256, f"vocab_size_no_special must be at least 256, got {vocab_size_no_special}"
-        tokenizer.train_from_iterator(text_iterator, vocab_size_no_special, pattern=SPLIT_PATTERN)
-        # 2) construct the associated tiktoken encoding for inference
-        pattern = tokenizer.get_pattern()
-        mergeable_ranks_list = tokenizer.get_mergeable_ranks()
-        mergeable_ranks = {bytes(k): v for k, v in mergeable_ranks_list}
-        tokens_offset = len(mergeable_ranks)
-        special_tokens = {name: tokens_offset + i for i, name in enumerate(SPECIAL_TOKENS)}
-        enc = tiktoken.Encoding(
-            name="rustbpe",
-            pat_str=pattern,
-            mergeable_ranks=mergeable_ranks, # dict[bytes, int] (token bytes -> merge priority rank)
-            special_tokens=special_tokens, # dict[str, int] (special token name -> token id)
-        )
-        return cls(enc, "<|bos|>")
+        # minbpe's train method requires the full text in memory, so we concatenate
+        text = "".join(text_iterator)
+        # 1) train using minbpe
+        tokenizer = RegexTokenizer(pattern=SPLIT_PATTERN)
+        tokenizer.train(text, vocab_size)
+        # 2) register special tokens
+        # the special tokens are inserted at the end of the vocab
+        special_tokens = {name: vocab_size + i for i, name in enumerate(SPECIAL_TOKENS)}
+        tokenizer.register_special_tokens(special_tokens)
+        # rebuild vocab to include special tokens
+        tokenizer.vocab = tokenizer._build_vocab()
+        return cls(tokenizer)
 
     @classmethod
     def from_directory(cls, tokenizer_dir):
-        pickle_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
-        with open(pickle_path, "rb") as f:
-            enc = pickle.load(f)
-        return cls(enc, "<|bos|>")
-
-    @classmethod
-    def from_pretrained(cls, tiktoken_name):
-        # https://github.com/openai/tiktoken/blob/eedc8563/tiktoken_ext/openai_public.py
-        enc = tiktoken.get_encoding(tiktoken_name)
-        # tiktoken calls the special document delimiter token "<|endoftext|>"
-        # yes this is confusing because this token is almost always PREPENDED to the beginning of the document
-        # it most often is used to signal the start of a new sequence to the LLM during inference etc.
-        # so in nanoChat we always use "<|bos|>" short for "beginning of sequence", but historically it is often called "<|endoftext|>".
-        return cls(enc, "<|endoftext|>")
+        model_path = os.path.join(tokenizer_dir, "tokenizer.model")
+        tokenizer = RegexTokenizer()
+        tokenizer.load(model_path)
+        return cls(tokenizer)
 
     def get_vocab_size(self):
-        return self.enc.n_vocab
+        return len(self.tokenizer.vocab)
 
     def get_special_tokens(self):
-        return self.enc.special_tokens_set
+        return self.tokenizer.special_tokens
 
     def id_to_token(self, id):
-        return self.enc.decode([id])
+        return self.tokenizer.decode([id])
 
     @lru_cache(maxsize=32)
     def encode_special(self, text):
-        return self.enc.encode_single_token(text)
+        return self.tokenizer.encode(text, allowed_special="all")[0]
 
     def get_bos_token_id(self):
         return self.bos_token_id
 
-    def encode(self, text, prepend=None, append=None, num_threads=8):
+    def encode(self, text, prepend=None, append=None):
         # text can be either a string or a list of strings
-
         if prepend is not None:
             prepend_id = prepend if isinstance(prepend, int) else self.encode_special(prepend)
         if append is not None:
             append_id = append if isinstance(append, int) else self.encode_special(append)
 
         if isinstance(text, str):
-            ids = self.enc.encode_ordinary(text)
+            ids = self.tokenizer.encode(text)
             if prepend is not None:
-                ids.insert(0, prepend_id) # TODO: slightly inefficient here? :( hmm
+                ids.insert(0, prepend_id)
             if append is not None:
                 ids.append(append_id)
         elif isinstance(text, list):
-            ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
-            if prepend is not None:
-                for ids_row in ids:
-                    ids_row.insert(0, prepend_id) # TODO: same
-            if append is not None:
-                for ids_row in ids:
-                    ids_row.append(append_id)
+            ids = [self.encode(t, prepend=prepend, append=append) for t in text]
         else:
             raise ValueError(f"Invalid input type: {type(text)}")
 
@@ -245,15 +219,14 @@ class RustBPETokenizer:
         return self.encode(*args, **kwargs)
 
     def decode(self, ids):
-        return self.enc.decode(ids)
+        return self.tokenizer.decode(ids)
 
     def save(self, tokenizer_dir):
-        # save the encoding object to disk
+        # save the tokenizer model to disk
         os.makedirs(tokenizer_dir, exist_ok=True)
-        pickle_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
-        with open(pickle_path, "wb") as f:
-            pickle.dump(self.enc, f)
-        print(f"Saved tokenizer encoding to {pickle_path}")
+        model_path = os.path.join(tokenizer_dir, "tokenizer")
+        self.tokenizer.save(model_path)
+        print(f"Saved tokenizer model to {model_path}.model")
 
     def render_conversation(self, conversation, max_tokens=2048):
         """
@@ -381,7 +354,7 @@ def get_tokenizer():
     base_dir = get_base_dir()
     tokenizer_dir = os.path.join(base_dir, "tokenizer")
     # return HuggingFaceTokenizer.from_directory(tokenizer_dir)
-    return RustBPETokenizer.from_directory(tokenizer_dir)
+    return MinBPETokenizer.from_directory(tokenizer_dir)
 
 def get_token_bytes(device="cpu"):
     import torch

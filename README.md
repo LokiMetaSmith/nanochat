@@ -99,27 +99,25 @@ Before you begin, ensure you have the necessary drivers and toolkits installed f
 
 The Python dependencies are managed by `uv`. The project is configured to install a specific version of PyTorch that is compatible with your hardware.
 
-**Important:** Before installing the dependencies, you must configure `pyproject.toml` to use the correct PyTorch build for your system.
+**Important for ROCm Users:** If you are using an AMD GPU, you may need to configure `uv` to use the correct PyTorch index. Open `pyproject.toml` and add or uncomment the following lines to ensure `uv` pulls the ROCm-compatible build of PyTorch:
 
--   **For ROCm:**
-    Open `pyproject.toml` and ensure the `tool.uv.index` section points to the ROCm wheels. For example:
-    ```toml
-    [[tool.uv.index]]
-    name = "pytorch-rocm63"
-    url = "https://download.pytorch.org/whl/rocm6.3"
-    explicit = true
-    ```
--   **For CUDA:**
-    You will need to change the `url` to the appropriate CUDA version. For example, for CUDA 12.8:
-    ```toml
-    [[tool.uv.index]]
-    name = "pytorch-cu128"
-    url = "https://download.pytorch.org/whl/cu128"
-    explicit = true
-    ```
-    You can find the correct URL for your CUDA version on the [PyTorch website](https://pytorch.org/get-started/locally/).
+```toml
+# target torch to rocm 6.3
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-rocm63" },
+]
+pytorch-triton-rocm = [
+    { index = "pytorch-rocm63" },
+]
 
-Once you have configured `pyproject.toml`, you can install the dependencies by running `uv sync` from within the activated virtual environment, as shown in the `speedrun.sh` script.
+[[tool.uv.index]]
+name = "pytorch-rocm63"
+url = "https://download.pytorch.org/whl/rocm6.3"
+explicit = true
+```
+
+Once you have configured `pyproject.toml`, you can install the dependencies by running the `speedrun.sh` script, which will handle the `uv` setup for you.
 
 ### Running on a Single GPU
 
