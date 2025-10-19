@@ -127,6 +127,16 @@ The `speedrun.sh` script has been configured to run on a single GPU by default, 
 
 If your GPU has less than 80GB of VRAM, you may need to reduce the `device_batch_size` in the training scripts to avoid running out of memory. This will increase training time but will allow the model to train successfully on lower-VRAM cards.
 
+### Troubleshooting
+
+If you encounter issues with automatic device detection, you can manually specify the device to use for training by passing the `--device` flag to the training scripts. For example:
+
+```bash
+python -m scripts.base_train -- --device=cuda:0
+```
+
+This can be useful if you have multiple GPUs and want to force the training to run on a specific one, or if the automatic detection is failing for any reason.
+
 ## Questions
 
 nanochat is designed to be short and sweet. One big advantage of this is that we can package up all of the files together and copy paste them to your favorite LLM to ask arbitrary questions. As an example, I like to package up the repo using the [files-to-prompt](https://github.com/simonw/files-to-prompt) utility like so:

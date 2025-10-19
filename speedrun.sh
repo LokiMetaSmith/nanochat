@@ -34,15 +34,19 @@ source .venv/bin/activate
 # --- PyTorch Installation ---
 echo "🔍 Detecting hardware..."
 
+DEVICE_FLAG=""
 if command -v nvidia-smi &> /dev/null; then
     echo "✅ NVIDIA GPU detected. Installing PyTorch for CUDA."
     uv pip install torch>=2.8.0 --extra-index-url https://download.pytorch.org/whl/cu128
+    DEVICE_FLAG="--device=cuda"
 elif command -v rocm-smi &> /dev/null; then
     echo "✅ AMD GPU detected. Installing PyTorch for ROCm."
     uv pip install torch>=2.8.0 pytorch-triton-rocm==3.4.0 --extra-index-url https://download.pytorch.org/whl/rocm6.3
+    DEVICE_FLAG="--device=cuda"
 else
     echo "🤷 No GPU detected. Installing CPU-only PyTorch."
     uv pip install torch>=2.8.0
+    DEVICE_FLAG="--device=cpu"
 fi
 
 echo "✅ PyTorch installation complete."
@@ -111,7 +115,7 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # pretrain the d20 model
-python -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
+python -m scripts.base_train -- --depth=20 --run=$WANDB_RUN $DEVICE_FLAG
 # evaluate the model on a larger chunk of train/val data and draw some samples
 python -m scripts.base_loss
 # evaluate the model on CORE tasks
@@ -121,14 +125,14 @@ python -m scripts.base_eval
 # Midtraining (teach the model conversation special tokens, tool use, multiple choice)
 
 # run midtraining and eval the model
-python -m scripts.mid_train --run=$WANDB_RUN
+python -m scripts.mid_train --run=$WANDB_RUN $DEVICE_FLAG
 python -m scripts.chat_eval -i mid
 
 # -----------------------------------------------------------------------------
 # Supervised Finetuning (domain adaptation to each sequence all by itself per row)
 
 # train sft and re-eval right away (should see a small bump)
-python -m scripts.chat_sft --run=$WANDB_RUN
+python -m scripts.chat_sft --run=$WANDB_RUN $DEVICE_FLAG
 python -m scripts.chat_eval -i sft
 
 # chat with the model over CLI! Leave out the -p to chat interactively
@@ -142,7 +146,7 @@ python -m scripts.chat_eval -i sft
 # (optional)
 
 # run reinforcement learning
-# python -m scripts.chat_rl -- --run=$WANDB_RUN
+# python -m scripts.chat_rl -- --run=$WANDB_RUN $DEVICE_FLAG
 # eval the RL model only on GSM8K
 # python -m scripts.chat_eval -- -i rl -a GSM8K
 
