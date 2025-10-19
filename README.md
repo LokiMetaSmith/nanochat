@@ -129,6 +129,12 @@ The `speedrun.sh` script has been configured to run on a single GPU by default, 
 
 If your GPU has less than 80GB of VRAM, you may need to reduce the `device_batch_size` in the training scripts to avoid running out of memory. This will increase training time but will allow the model to train successfully on lower-VRAM cards.
 
+### Running with Docker (ROCm)
+
+For users with AMD GPUs, the recommended way to run nanochat is with Docker. This ensures a consistent and correct environment with the proper ROCm-enabled version of PyTorch.
+
+Please see [DOCKER_INSTRUCTIONS.md](DOCKER_INSTRUCTIONS.md) for detailed instructions on how to build and run the project in a Docker container.
+
 ## Questions
 
 nanochat is designed to be short and sweet. One big advantage of this is that we can package up all of the files together and copy paste them to your favorite LLM to ask arbitrary questions. As an example, I like to package up the repo using the [files-to-prompt](https://github.com/simonw/files-to-prompt) utility like so:
