@@ -8,7 +8,7 @@ set -e
 export OMP_NUM_THREADS=1
 export TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
 export HSA_OVERRIDE_GFX_VERSION=11.0.0
-NANOCHAT_BASE_DIR="/app/.cache/nanochat"
+NANOCHAT_BASE_DIR="/home/loki/app/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 
 # -----------------------------------------------------------------------------
