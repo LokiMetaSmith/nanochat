@@ -2,8 +2,9 @@
 Evaluate compression ratio of the tokenizer.
 """
 
-from nanochat.tokenizer import get_tokenizer, RustBPETokenizer
+from nanochat.tokenizer import get_tokenizer, MinBPETokenizer
 from nanochat.dataset import parquets_iter_batched
+import tiktoken
 
 # Random text I got from a random website this morning
 news_text = r"""
@@ -167,9 +168,11 @@ vocab_sizes = {}
 for tokenizer_name in ["gpt2", "gpt4", "ours"]:
 
     if tokenizer_name == "gpt2":
-        tokenizer = RustBPETokenizer.from_pretrained("gpt2") # gpt-2 base model tokenizer
+        enc = tiktoken.get_encoding("gpt2")
+        tokenizer = MinBPETokenizer(enc)
     elif tokenizer_name == "gpt4":
-        tokenizer = RustBPETokenizer.from_pretrained("cl100k_base") # gpt-4 base model tokenizer
+        enc = tiktoken.get_encoding("cl100k_base")
+        tokenizer = MinBPETokenizer(enc)
     else:
         tokenizer = get_tokenizer()
 
