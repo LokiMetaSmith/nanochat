@@ -21,8 +21,6 @@ python -m pytest tests/test_rustbpe.py -v -s
 import regex as re
 from collections import Counter, defaultdict
 import time
-import rustbpe
-import tiktoken
 import pytest
 
 GPT4_SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
@@ -530,35 +528,6 @@ def test_correctness(enwik8_small):
     assert custom_match(hf_ids, fast_reference_ids), "HuggingFace should match fast reference"
     print("✅ HuggingFace == Fast")
 
-    # Finally use our own Rust implementation
-    print("\nTraining rustbpe...")
-    rustbpe_tokenizer = rustbpe.Tokenizer()
-    _, rustbpe_train_time = time_function(rustbpe_tokenizer.train_from_iterator, [text], vocab_size)
-    rustbpe_ids, rustbpe_encode_time = time_function(rustbpe_tokenizer.encode, encode_text)
-    print(f"RustBPE train time: {rustbpe_train_time:.4f}s")
-    print(f"RustBPE encode time: {rustbpe_encode_time:.4f}s")
-    print(rustbpe_ids[:20])
-
-    assert rustbpe_ids == fast_reference_ids, "RustBPE should match fast reference"
-    print("✅ RustBPE == Fast")
-
-    # Now export rustbpe to tiktoken for more efficient inference
-    print("\nTesting tiktoken export...")
-    pattern = rustbpe_tokenizer.get_pattern()
-    mergeable_ranks_list = rustbpe_tokenizer.get_mergeable_ranks()
-    mergeable_ranks = {bytes(k): v for k, v in mergeable_ranks_list}
-    enc = tiktoken.Encoding(
-        name="rustbpe",
-        pat_str=pattern,
-        mergeable_ranks=mergeable_ranks,
-        special_tokens={},
-    )
-    tiktoken_ids, tiktoken_encode_time = time_function(enc.encode, encode_text)
-    print(f"Tiktoken encode time: {tiktoken_encode_time:.4f}s")
-    print(tiktoken_ids[:20])
-
-    assert tiktoken_ids == rustbpe_ids, "Tiktoken should match RustBPE"
-    print("✅ Tiktoken == RustBPE")
 
 
 @pytest.mark.slow
@@ -575,35 +544,24 @@ def test_training_performance(enwik8_large):
     # _, optimized_python_train_time = time_function(optimized_python_tokenizer.train, text, vocab_size)
     # print(f"Optimized python train time: {optimized_python_train_time:.4f}s")
 
-    # Train rustbpe
-    print("\nTraining rustbpe...")
-    rustbpe_tokenizer = rustbpe.Tokenizer()
-    _, rustbpe_train_time = time_function(rustbpe_tokenizer.train_from_iterator, [text], vocab_size)
-    print(f"RustBPE train time: {rustbpe_train_time:.4f}s")
-    assert rustbpe_train_time > 0, "Training should take some time"
-
     # Train HuggingFace
     print("\nTraining HuggingFace...")
     hf_tokenizer, hf_train_time = time_function(HuggingFaceTokenizer.train_from_iterator, [text], vocab_size)
     print(f"HuggingFace train time: {hf_train_time:.4f}s")
     assert hf_train_time > 0, "Training should take some time"
 
-    # Print comparison
-    print(f"\n📊 Performance comparison:")
-    print(f"   RustBPE: {rustbpe_train_time:.4f}s")
-    print(f"   HuggingFace: {hf_train_time:.4f}s")
-    print(f"   Speedup: {hf_train_time/rustbpe_train_time:.2f}x")
-
 def test_interface(enwik8_small):
-    """Test the RustBPETokenizer interface for training, encoding, decoding, and serialization."""
+    """Test the MinBPETokenizer interface for training, encoding, decoding, and serialization."""
     import tempfile
-    from nanochat.tokenizer import RustBPETokenizer
+    from nanochat.tokenizer import MinBPETokenizer, SPECIAL_TOKENS
 
     # Simple train test
     vocab_size = 300
-    tok = RustBPETokenizer.train_from_iterator([enwik8_small], vocab_size)
-    assert tok.get_vocab_size() == vocab_size, f"Expected vocab size {vocab_size}, got {tok.get_vocab_size()}"
-    print(f"✅ Trained tokenizer with vocab size {vocab_size}")
+    tok = MinBPETokenizer.train_from_iterator([enwik8_small], vocab_size)
+    # in minbpe, special tokens are added on top of the vocab_size
+    expected_vocab_size = vocab_size + len(SPECIAL_TOKENS)
+    assert tok.get_vocab_size() == expected_vocab_size, f"Expected vocab size {expected_vocab_size}, got {tok.get_vocab_size()}"
+    print(f"✅ Trained tokenizer with vocab size {expected_vocab_size}")
 
     # Encode/decode text
     encode_text = "Hello world! How are you? 🙃"
@@ -629,7 +587,7 @@ def test_interface(enwik8_small):
     # Save/load test through a temporary directory
     with tempfile.TemporaryDirectory() as tmp_dir:
         tok.save(tmp_dir)
-        tok_reloaded = RustBPETokenizer.from_directory(tmp_dir)
+        tok_reloaded = MinBPETokenizer.from_directory(tmp_dir)
         ids_reloaded = tok_reloaded.encode(encode_text)
         assert ids_reloaded == ids, "Reloaded tokenizer should produce same results"
         print("✅ Save/load through temporary directory OK")

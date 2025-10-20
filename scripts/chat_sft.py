@@ -59,8 +59,18 @@ exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from 
 user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
 # -----------------------------------------------------------------------------
 
+# a new command line flag to allow overriding the device, for troubleshooting
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('--device', type=str, default=None, help='device to use for training, e.g. "cpu" or "cuda" or "cuda:0"')
+args = parser.parse_args()
+if args.device is not None:
+    print(f"Overriding device to {args.device}")
+    user_config['device'] = args.device
+
 # Compute init
-ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
+ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(requested_device=user_config.get('device', None))
+print0(f"Using device: {device}")
 master_process = ddp_rank == 0
 device_type = device.type
 autocast_dtype = resolve_autocast_dtype(device_type, dtype)

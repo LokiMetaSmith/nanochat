@@ -23,7 +23,10 @@ def print0(s="",**kwargs):
     if ddp_rank == 0:
         print(s, **kwargs)
 
-for i, arg in enumerate(sys.argv[1:]):
+# used to store arguments that are handled by this script
+processed_args = []
+
+for arg in sys.argv[1:]:
     if '=' not in arg:
         # assume it's the name of a config file, unless it's a flag-like argument
         if not arg.startswith('-'):
@@ -32,10 +35,7 @@ for i, arg in enumerate(sys.argv[1:]):
             with open(config_file) as f:
                 print0(f.read())
             exec(open(config_file).read())
-        else:
-            # it's a flag-like argument, e.g. -i mid or --task-name MMLU
-            # we will assume it is handled by argparse and skip it
-            pass
+            processed_args.append(arg)
     else:
         # assume it's a --key=value argument
         if not arg.startswith('--'):
@@ -58,5 +58,11 @@ for i, arg in enumerate(sys.argv[1:]):
             # cross fingers
             print0(f"Overriding: {key} = {attempt}")
             globals()[key] = attempt
+            processed_args.append(arg)
         else:
-            print0(f"Warning: unknown config key: {key}")
+            # This arg is not in globals, so it might be for argparse.
+            # We'll just leave it in sys.argv for later processing.
+            pass
+
+# remove all processed args from sys.argv
+sys.argv = [sys.argv[0]] + [arg for arg in sys.argv[1:] if arg not in processed_args]
