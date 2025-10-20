@@ -60,6 +60,7 @@ if args.device is not None:
 
 # Compute init
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(requested_device=user_config.get('device', None))
+print0(f"Using device: {device}")
 master_process = ddp_rank == 0
 device_type = device.type
 autocast_dtype = resolve_autocast_dtype(device_type, dtype)

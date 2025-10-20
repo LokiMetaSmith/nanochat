@@ -136,42 +136,49 @@ def get_dist_info():
         return False, 0, 0, 1
 
 
-def compute_init():
+def compute_init(requested_device=None):
     """Basic initialization that we keep doing over and over, so make common."""
-
-    # Detect hardware
-    device_type = get_device_type()
-    if device_type == "rocm":
-        backend = "rccl"
-    elif device_type == "cuda":
-        backend = "nccl"
-    else: # cpu
-        backend = "gloo"
-
-    # Reproducibility
-    torch.manual_seed(42)
-    if device_type != "cpu":
-        torch.cuda.manual_seed(42) # works for rocm too
-
-    # Precision
-    if device_type == 'cuda':
-        torch.set_float32_matmul_precision("high") # uses tf32 instead of fp32 for matmuls
 
     # Distributed setup: Distributed Data Parallel (DDP), optional
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
-    torch_device_str = "cuda" if device_type in ("cuda", "rocm") else "cpu"
-    if ddp:
-        device = torch.device(torch_device_str, ddp_local_rank)
-        if device_type != "cpu":
-            torch.cuda.set_device(device) # make "cuda" default to this device
-        dist.init_process_group(backend=backend, device_id=device if device_type != "cpu" else None)
-        dist.barrier()
+
+    # Reproducibility
+    torch.manual_seed(42 + ddp_rank) # each rank gets a different seed
+
+    # Detect hardware and set device
+    if requested_device:
+        device = torch.device(requested_device)
+        if device.type == 'cuda':
+            torch.cuda.set_device(device)
+    elif ddp:
+        # In DDP, device is determined by local rank
+        if torch.cuda.is_available():
+            device = torch.device("cuda", ddp_local_rank)
+            torch.cuda.set_device(device)
+        else:
+            device = torch.device("cpu")
     else:
-        device = torch.device(torch_device_str)
+        # Standalone mode, detect best available device
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
+
+    device_type = device.type
+    is_rocm = device_type == 'cuda' and hasattr(torch.version, 'hip') and torch.version.hip is not None
+    backend = "nccl" if device_type == 'cuda' else "gloo"
+
+    if ddp:
+        dist.init_process_group(backend=backend)
 
     if ddp_rank == 0:
-        logger.info(f"Using device: {device}")
-        logger.info(f"Distributed world size: {ddp_world_size}")
+        print(f"Starting DDP with world size {ddp_world_size}, backend '{backend}'")
+        print(f"Device: {device}")
+        print(f"Is ROCm: {is_rocm}")
+
+    # Set precision for CUDA devices
+    if device_type == 'cuda':
+        torch.set_float32_matmul_precision("high")
 
     return ddp, ddp_rank, ddp_local_rank, ddp_world_size, device
 
