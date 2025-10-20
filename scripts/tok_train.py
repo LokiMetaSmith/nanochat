@@ -1,6 +1,5 @@
 """
-Train a tokenizer using the HuggingFace Tokenizers library.
-In the style of GPT-4 tokenizer.
+Train a tokenizer using the tiktoken library.
 """
 import os
 import time
@@ -74,16 +73,22 @@ assert decoded == test_text
 # allows us to report a loss that is invariant to the vocab size of the tokenizer.
 # The bits per byte on the validation set is then one of the primary metrics we care about.
 vocab_size = tokenizer.get_vocab_size()
-special_set = set(tokenizer.get_special_tokens())
+special_tokens = tokenizer.get_special_tokens()
 token_strings = [tokenizer.decode([token_id]) for token_id in range(vocab_size)]
 token_bytes = []
 for token_id in range(vocab_size):
     token_str = token_strings[token_id] # the Python string representation of this token
-    if token_str in special_set:
+    is_special = False
+    for special in special_tokens:
+        if token_str == special:
+            is_special = True
+            break
+    if is_special:
         token_bytes.append(0) # special characters are not counted
     else:
         id_bytes = len(token_str.encode("utf-8")) # number of bytes that make up this token
         token_bytes.append(id_bytes)
+
 token_bytes = torch.tensor(token_bytes, dtype=torch.int32, device='cpu')
 token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
 with open(token_bytes_path, "wb") as f:
@@ -96,7 +101,7 @@ token_bytes_nonzero = (token_bytes[token_bytes > 0]).to(dtype=torch.float32)
 get_report().log(section="Tokenizer training", data=[
     vars(args), # argparse command line arguments
     {"train_time": train_time},
-    {"num_special_tokens": len(special_set)},
+    {"num_special_tokens": len(special_tokens)},
     {
         "token_bytes_min": int(token_bytes_nonzero.min().item()),
         "token_bytes_max": int(token_bytes_nonzero.max().item()),
