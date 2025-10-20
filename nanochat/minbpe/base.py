@@ -40,6 +40,51 @@ def merge(ids, pair, idx):
             i += 1
     return newids
 
+def fast_merge_inplace(ids, pair, idx):
+    """
+    In the list of integers (ids), replace all consecutive occurrences
+    of pair with the new integer token idx in place
+    Example: ids=[1, 2, 3, 1, 2], pair=(1, 2), idx=4 -> [4, 3, 4]
+    """
+    # Find all positions where the pair occurs
+    i = 0
+    while i < len(ids) - 1:
+        if ids[i] == pair[0] and ids[i+1] == pair[1]:
+            ids[i] = idx
+            ids.pop(i+1)
+        else:
+            i += 1
+    return ids
+    newids = []
+    i = 0
+    while i < len(ids):
+        # if not at the very last position AND the pair matches, replace it
+        if ids[i] == pair[0] and i < len(ids) - 1 and ids[i+1] == pair[1]:
+            newids.append(idx)
+            i += 2
+        else:
+            newids.append(ids[i])
+            i += 1
+    return newids
+
+
+def fast_merge_inplace(ids, pair, idx):
+    """
+    In the list of integers (ids), replace all consecutive occurrences
+    of pair with the new integer token idx in place
+    Example: ids=[1, 2, 3, 1, 2], pair=(1, 2), idx=4 -> [4, 3, 4]
+    """
+    # Find all positions where the pair occurs
+    i = 0
+    while i < len(ids) - 1:
+        if ids[i] == pair[0] and ids[i+1] == pair[1]:
+            ids[i] = idx
+            ids.pop(i+1)
+        else:
+            i += 1
+    return ids
+
+
 # first two helper functions...
 def replace_control_characters(s: str) -> str:
     # we don't want to print control characters

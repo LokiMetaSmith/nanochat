@@ -78,18 +78,17 @@ python -m nanochat.report reset
 # -----------------------------------------------------------------------------
 # Tokenizer
 
-# Download the first ~2B characters of pretraining dataset
+# Download the first ~200M characters of pretraining dataset
 # look at dev/repackage_data_reference.py for details on how this data was prepared
-# each data shard is ~250M chars
-# so we download 2e9 / 250e6 = 8 data shards at this point
-# each shard is ~100MB of text (compressed), so this is about ~800MB of data on disk
-python -m nanochat.dataset -n 8
+# each data shard is ~250M chars, so we'll download 1 shard
+# each shard is ~100MB of text (compressed)
+python -m nanochat.dataset -n 1
 # Immediately also kick off downloading more shards in the background while tokenizer trains
 # See comment below for why 240 is the right number here
 python -m nanochat.dataset -n 240 &
 DATASET_DOWNLOAD_PID=$!
-# train the tokenizer with vocab size 2**16 = 65536 on ~2B characters of data
-python -m scripts.tok_train --max_chars=2000000000
+# train the tokenizer with vocab size 2**16 = 65536 on ~200M characters of data
+python -m scripts.tok_train --max_chars=200000000
 # evaluate the tokenizer (report compression ratio etc.)
 python -m scripts.tok_eval
 

@@ -10,7 +10,8 @@ Unlike BasicTokenizer:
 """
 
 import regex as re
-from .base import Tokenizer, get_stats, merge
+from collections import Counter, defaultdict
+from .base import Tokenizer, get_stats, merge, fast_merge_inplace
 
 
 # the main GPT text split patterns, see
@@ -34,36 +35,114 @@ class RegexTokenizer(Tokenizer):
         self.inverse_special_tokens = {}
 
     def train(self, text, vocab_size, verbose=False):
+        """
+        A number of optimizations are introduced:
+        - delete function call overhead by inlining functions
+        - modifying list of ids in place with .pop() instead of creating a new list
+        - collapse identical chunks to just the unique ones
+        - update counts more cleverly - only around the affected chunks
+        """
         assert vocab_size >= 256
         num_merges = vocab_size - 256
 
         # split the text up into text chunks
         text_chunks = re.findall(self.compiled_pattern, text)
 
-        # input text preprocessing
-        ids = [list(ch.encode("utf-8")) for ch in text_chunks]
+        # many, many chunks are identical, so we can "collapse" them to just the unique ones
+        counts = Counter(text_chunks)
+        unique_chunks = [ch for ch, count in counts.items()]
+        chunk_counts = [count for ch, count in counts.items()]
 
+        # input text preprocessing
+        ids = [list(ch.encode("utf-8")) for ch in unique_chunks]
         # iteratively merge the most common pairs to create new tokens
         merges = {} # (int, int) -> int
         vocab = {idx: bytes([idx]) for idx in range(256)} # idx -> bytes
+
+        # Initial count: build stats and position tracking
+        stats = defaultdict(int)
+        positions = defaultdict(set)  # pair -> set of chunk indices that contain this pair
+
+        for chunk_idx, (chunk_ids, count) in enumerate(zip(ids, chunk_counts)):
+            for pair in zip(chunk_ids, chunk_ids[1:]):
+                stats[pair] += count
+                positions[pair].add(chunk_idx)
+
         for i in range(num_merges):
-            # count the number of times every consecutive pair appears
-            stats = {}
-            for chunk_ids in ids:
-                # passing in stats will update it in place, adding up counts
-                get_stats(chunk_ids, stats)
+            if not stats:
+                break
+
             # find the pair with the highest count
             pair = max(stats, key=stats.get)
             # mint a new token: assign it the next available id
             idx = 256 + i
-            # replace all occurrences of pair in ids with idx
-            ids = [merge(chunk_ids, pair, idx) for chunk_ids in ids]
+
+            # Get chunks that contain this pair
+            affected_chunks = positions[pair]
+
+            # Track count changes for incremental update
+            count_changes = defaultdict(int)
+
+            # Replace all occurrences of pair in affected chunks only
+            for chunk_idx in affected_chunks:
+                chunk_ids = ids[chunk_idx]
+                chunk_count = chunk_counts[chunk_idx]
+                ix = 0
+                while ix < len(chunk_ids) - 1:
+                    if chunk_ids[ix] == pair[0] and chunk_ids[ix+1] == pair[1]:
+                        # Track what pairs are being removed/added
+                        # Remove: (prev, A), (A, B), (B, next)
+                        if ix > 0:
+                            old_left = (chunk_ids[ix-1], chunk_ids[ix])
+                            count_changes[old_left] -= chunk_count
+
+                        # The merged pair disappears
+                        count_changes[pair] -= chunk_count
+
+                        if ix + 2 < len(chunk_ids):
+                            old_right = (chunk_ids[ix+1], chunk_ids[ix+2])
+                            count_changes[old_right] -= chunk_count
+
+                        # Apply the merge
+                        chunk_ids[ix] = idx
+                        chunk_ids.pop(ix+1)
+
+                        # Add: (prev, C), (C, next)
+                        if ix > 0:
+                            new_left = (chunk_ids[ix-1], chunk_ids[ix])
+                            count_changes[new_left] += chunk_count
+
+                        if ix + 1 < len(chunk_ids):
+                            new_right = (chunk_ids[ix], chunk_ids[ix+1])
+                            count_changes[new_right] += chunk_count
+                    else:
+                        ix += 1
+
+            # Apply incremental changes to stats and positions
+            for changed_pair, delta in count_changes.items():
+                if changed_pair == pair:
+                    # The merged pair should disappear completely
+                    continue
+
+                stats[changed_pair] += delta
+
+                # Update positions for changed pairs - only check affected chunks
+                for chunk_idx in affected_chunks:
+                    chunk_ids = ids[chunk_idx]
+                    contains_pair = any((chunk_ids[j], chunk_ids[j+1]) == changed_pair
+                                      for j in range(len(chunk_ids) - 1))
+                    if contains_pair:
+                        positions[changed_pair].add(chunk_idx)
+                    else:
+                        positions[changed_pair].discard(chunk_idx)
+
+            # Remove the merged pair completely
+            del stats[pair]
+            del positions[pair]
+
             # save the merge
             merges[pair] = idx
             vocab[idx] = vocab[pair[0]] + vocab[pair[1]]
-            # prints
-            if verbose:
-                print(f"merge {i+1}/{num_merges}: {pair} -> {idx} ({vocab[idx]}) had {stats[pair]} occurrences")
 
         # save class variables
         self.merges = merges # used in encode()
@@ -105,7 +184,7 @@ class RegexTokenizer(Tokenizer):
                 break # nothing else can be merged anymore
             # otherwise let's merge the best pair (lowest merge index)
             idx = self.merges[pair]
-            ids = merge(ids, pair, idx)
+            ids = fast_merge_inplace(ids, pair, idx)
         return ids
 
     def encode_ordinary(self, text):
