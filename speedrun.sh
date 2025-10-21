@@ -114,7 +114,7 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # pretrain the d20 model
-python -m scripts.base_train -- --depth=20 --run=$WANDB_RUN $DEVICE_FLAG
+python -m scripts.base_train --depth=20 --run=$WANDB_RUN $DEVICE_FLAG
 # evaluate the model on a larger chunk of train/val data and draw some samples
 python -m scripts.base_loss
 # evaluate the model on CORE tasks
@@ -145,7 +145,7 @@ python -m scripts.chat_eval -i sft
 # (optional)
 
 # run reinforcement learning
-# python -m scripts.chat_rl -- --run=$WANDB_RUN $DEVICE_FLAG
+python -m scripts.chat_rl --run=$WANDB_RUN $DEVICE_FLAG
 # eval the RL model only on GSM8K
 # python -m scripts.chat_eval -- -i rl -a GSM8K
 
