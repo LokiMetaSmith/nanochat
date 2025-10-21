@@ -148,8 +148,6 @@ def compute_init(requested_device=None):
     # Detect hardware and set device
     if requested_device:
         device = torch.device(requested_device)
-        if device.type == 'cuda':
-            torch.cuda.set_device(device)
     elif ddp:
         # In DDP, device is determined by local rank
         if torch.cuda.is_available():
@@ -178,6 +176,12 @@ def compute_init(requested_device=None):
 
     # Set precision for CUDA devices
     if device_type == 'cuda':
+        # torch.cuda.device is a context manager that changes the selected device
+        if device.index is not None:
+            torch.cuda.set_device(device)
+        else:
+            # if no index is specified, torch.cuda.current_device() will be used
+            pass
         torch.set_float32_matmul_precision("high")
 
     return ddp, ddp_rank, ddp_local_rank, ddp_world_size, device
