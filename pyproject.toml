@@ -3,7 +3,7 @@ name = "nanochat"
 version = "0.1.0"
 description = "the minimal full-stack ChatGPT clone"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "datasets>=4.0.0",
     "fastapi>=0.117.1",
@@ -16,21 +16,6 @@ dependencies = [
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
 ]
-
-
-# target torch to rocm 6.3
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-rocm63" },
-]
-pytorch-triton-rocm = [
-    { index = "pytorch-rocm63" },
-]
-
-[[tool.uv.index]]
-name = "pytorch-rocm63"
-url = "https://download.pytorch.org/whl/rocm6.3"
-explicit = true
 
 
 [tool.setuptools]

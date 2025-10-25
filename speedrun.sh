@@ -13,10 +13,6 @@ set -e
 
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
-# For newer AMD GPUs that are not yet officially supported by PyTorch ROCm builds,
-# we can override the detected GPU architecture to a compatible one.
-# For example, for a gfx1151 GPU, we can use gfx1100 (11.0.0).
-export HSA_OVERRIDE_GFX_VERSION=11.0.0
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 
 mkdir -p $NANOCHAT_BASE_DIR
@@ -34,15 +30,24 @@ source .venv/bin/activate
 # --- PyTorch Installation ---
 echo "🔍 Detecting hardware..."
 
+FORCE_AMD=false
+if [[ "$1" == "--force-amd" ]]; then
+    FORCE_AMD=true
+fi
+
 DEVICE_FLAG=""
 if command -v nvidia-smi &> /dev/null; then
     echo "✅ NVIDIA GPU detected. Installing PyTorch for CUDA."
     uv pip install torch>=2.8.0 --extra-index-url https://download.pytorch.org/whl/cu128
     DEVICE_FLAG="--device=cuda"
-elif command -v rocm-smi &> /dev/null; then
-    echo "✅ AMD GPU detected. Installing PyTorch for ROCm."
-    uv pip install torch>=2.8.0 pytorch-triton-rocm==3.4.0 --extra-index-url https://download.pytorch.org/whl/rocm6.3
+elif [[ "$FORCE_AMD" = true ]] || command -v rocm-smi &> /dev/null; then
+    echo "✅ AMD GPU detected. Installing ROCm 7.9.0 and PyTorch."
+    uv pip install --index-url https://repo.amd.com/rocm/whl/gfx1151/ "rocm[libraries,devel]"
+    uv pip install --index-url https://repo.amd.com/rocm/whl/gfx1151/ torch torchvision
     DEVICE_FLAG="--device=cuda"
+    export ROCM_PATH=$(python -m rocm_sdk path --root)
+    export LD_LIBRARY_PATH=$ROCM_PATH/lib
+    export PATH=$PATH:$ROCM_PATH/bin
 else
     echo "🤷 No GPU detected. Installing CPU-only PyTorch."
     uv pip install torch>=2.8.0
@@ -50,6 +55,16 @@ else
 fi
 
 echo "✅ PyTorch installation complete."
+
+# --- Verification Step ---
+echo "🔎 Verifying PyTorch installation..."
+python -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'ROCm available: {torch.version.hip is not None}')"
+if python -c "import torch; exit(0) if torch.version.hip is not None else exit(1)"; then
+    echo "✅ PyTorch ROCm installation verified."
+else
+    echo "❌ PyTorch ROCm installation failed."
+    exit 1
+fi
 
 # --- Project Installation ---
 echo "🚀 Installing nanochat project dependencies..."

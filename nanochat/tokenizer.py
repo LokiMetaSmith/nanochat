@@ -146,12 +146,30 @@ class MinBPETokenizer:
         self.bos_token_id = self.encode_special("<|bos|>")
 
     @classmethod
-    def train_from_iterator(cls, text_iterator, vocab_size):
-        # minbpe's train method requires the full text in memory, so we concatenate
-        text = "".join(text_iterator)
+    def train(cls, text, vocab_size):
         # 1) train using minbpe
         tokenizer = RegexTokenizer(pattern=SPLIT_PATTERN)
         tokenizer.train(text, vocab_size)
+        # 2) register special tokens
+        # the special tokens are inserted at the end of the vocab
+        special_tokens = {name: vocab_size + i for i, name in enumerate(SPECIAL_TOKENS)}
+        tokenizer.register_special_tokens(special_tokens)
+        # rebuild vocab to include special tokens
+        tokenizer.vocab = tokenizer._build_vocab()
+        return cls(tokenizer)
+
+    @classmethod
+    def train_from_iterator(cls, text_iterator, vocab_size, chunk_size=1000000):
+        # minbpe's train method requires the full text in memory, so we process in chunks
+        text_chunk = ""
+        tokenizer = RegexTokenizer(pattern=SPLIT_PATTERN)
+        for text in text_iterator:
+            text_chunk += text
+            if len(text_chunk) >= chunk_size:
+                tokenizer.train(text_chunk, vocab_size)
+                text_chunk = ""
+        if text_chunk:
+            tokenizer.train(text_chunk, vocab_size)
         # 2) register special tokens
         # the special tokens are inserted at the end of the vocab
         special_tokens = {name: vocab_size + i for i, name in enumerate(SPECIAL_TOKENS)}

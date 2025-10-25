@@ -88,6 +88,8 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
     }
     return out
 
+from nanochat.tokenizer import HuggingFaceTokenizer
+
 # -----------------------------------------------------------------------------
 # HuggingFace loading utilities and light wrappers for a model
 
