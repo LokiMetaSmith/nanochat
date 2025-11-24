@@ -15,8 +15,10 @@ set -e
 export OMP_NUM_THREADS=1
 # For newer AMD GPUs that are not yet officially supported by PyTorch ROCm builds,
 # we can override the detected GPU architecture to a compatible one.
-# For example, for a gfx1151 GPU, we can use gfx1100 (11.0.0).
-export HSA_OVERRIDE_GFX_VERSION=11.0.0
+# For example, for a gfx1151 GPU, we can use gfx1151 (11.5.1).
+export HSA_OVERRIDE_GFX_VERSION=11.5.1
+# Enable experimental Triton support for ROCm (needed for Flash Attention on Strix Halo)
+export TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 
 mkdir -p $NANOCHAT_BASE_DIR
@@ -118,7 +120,7 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # pretrain the d20 model
-python -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
+python -m scripts.base_train -- --depth=10 --run=$WANDB_RUN
 # evaluate the model on a larger chunk of train/val data and draw some samples
 python -m scripts.base_loss
 # evaluate the model on CORE tasks
