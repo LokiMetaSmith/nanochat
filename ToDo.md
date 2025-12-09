@@ -1,7 +1,7 @@
 # Remaining Tasks & Roadmap
 
 ## 🚀 Optimization & Strix Halo Specifics
-- [ ] **MXFP4 Investigation**: Research and implement OCP Microscaling (MXFP4) support for inference using AMD Quark, once the ecosystem matures for APUs.
+- [x] **MXFP4 Investigation**: Research and implement OCP Microscaling (MXFP4) support for inference using AMD Quark, once the ecosystem matures for APUs.
 - [ ] **System Tuner Expansion**: Enhance `scripts/tune_system.py` to auto-tune:
     - Learning rates and schedules.
     - Optimizer hyperparameters (momentum, weight decay).
