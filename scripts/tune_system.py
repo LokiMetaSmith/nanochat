@@ -175,10 +175,13 @@ def main():
 
     # Compilation flags
     compile_options = [True, False] if is_rocm else [True]
+    compile_dynamic_options = [False] # Default to static shapes
 
     if is_strix_halo:
-        print("NOTE: Disabling 'compile=True' for tuning on Strix Halo due to known stability issues.", flush=True)
-        compile_options = [False]
+        print("NOTE: Strix Halo detected. Enabling dynamic=True/False investigation.", flush=True)
+        # We allow compile=True to be tested, specifically to investigate dynamic=True vs False
+        compile_options = [True, False]
+        compile_dynamic_options = [False, True]
 
     # Environment variable combinations
     env_configs = [{}]
@@ -205,28 +208,34 @@ def main():
 
     for env_vars in env_configs:
         for compile_opt in compile_options:
-            for bs in batch_sizes:
-                # Construct overrides
-                overrides = {
-                    "device_batch_size": bs,
-                    "depth": depth,
-                    "compile": str(compile_opt),
-                    "eval_tokens": bs * 2048, # Scale validation to avoid timeout (1 step)
-                }
+            # If compiling, try both dynamic options if available (e.g. on Strix Halo)
+            # If not compiling, dynamic option is irrelevant
+            current_dynamic_options = compile_dynamic_options if compile_opt else [False]
 
-                throughput = run_benchmark(overrides, env_vars, base_config_path=args.config, minimal_validation=MINIMAL_VALIDATION)
+            for dynamic_opt in current_dynamic_options:
+                for bs in batch_sizes:
+                    # Construct overrides
+                    overrides = {
+                        "device_batch_size": bs,
+                        "depth": depth,
+                        "compile": str(compile_opt),
+                        "compile_dynamic": str(dynamic_opt),
+                        "eval_tokens": bs * 2048, # Scale validation to avoid timeout (1 step)
+                    }
 
-                if throughput > 0:
-                    results.append((overrides, env_vars, throughput))
-                    if throughput > best_throughput:
-                        best_throughput = throughput
-                        best_overrides = overrides
-                        best_env = env_vars
-                else:
-                    # If we failed (likely OOM), larger batch sizes will likely also fail
-                    # So break the inner loop
-                    print(f"Batch size {bs} failed, stopping search for this env config.", flush=True)
-                    break
+                    throughput = run_benchmark(overrides, env_vars, base_config_path=args.config, minimal_validation=MINIMAL_VALIDATION)
+
+                    if throughput > 0:
+                        results.append((overrides, env_vars, throughput))
+                        if throughput > best_throughput:
+                            best_throughput = throughput
+                            best_overrides = overrides
+                            best_env = env_vars
+                    else:
+                        # If we failed (likely OOM), larger batch sizes will likely also fail
+                        # So break the inner loop
+                        print(f"Batch size {bs} failed, stopping search for this env config.", flush=True)
+                        break
 
     print("\n" + "="*40, flush=True)
     print("Tuning Results:", flush=True)
@@ -241,7 +250,7 @@ def main():
 
     for ovr, env, tp in results:
         env_str = " ".join([f"{k}={v}" for k,v in env.items()]) if env else "Default Env"
-        print(f"Throughput: {tp:,.2f} tok/sec | BS: {ovr['device_batch_size']} | Compile: {ovr['compile']} | Env: {env_str}", flush=True)
+        print(f"Throughput: {tp:,.2f} tok/sec | BS: {ovr['device_batch_size']} | Compile: {ovr['compile']} | Dynamic: {ovr.get('compile_dynamic', 'False')} | Env: {env_str}", flush=True)
 
     print("\n" + "="*40, flush=True)
     print("Best Throughput Configuration:", flush=True)
