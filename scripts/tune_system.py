@@ -343,7 +343,7 @@ def main():
                         "eval_tokens": bs * seq_len, # Scale validation to avoid timeout (1 step)
                     }
 
-                throughput = run_benchmark(overrides, env_vars, base_config_path=args.config, base_config=base_config, extra_args=unknown, minimal_validation=MINIMAL_VALIDATION)
+                    throughput = run_benchmark(overrides, env_vars, base_config_path=args.config, base_config=base_config, extra_args=unknown, minimal_validation=MINIMAL_VALIDATION)
 
                     if throughput > 0:
                         results.append((overrides, env_vars, throughput))
