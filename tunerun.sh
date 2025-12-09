@@ -20,8 +20,13 @@ PROFILE="configs/medium.json" # Default profile
 
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --profile) PROFILE="configs/$2.json"; shift ;;
-        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+        --profile)
+            PROFILE="configs/$2.json"
+            shift
+            ;;
+        *)
+            PY_ARGS="$PY_ARGS $1"
+            ;;
     esac
     shift
 done
@@ -105,4 +110,4 @@ fi
 # -----------------------------------------------------------------------------
 # Run the System Tuner
 
-python -m scripts.tune_system --config "$PROFILE"
+python -m scripts.tune_system --config "$PROFILE" $PY_ARGS
