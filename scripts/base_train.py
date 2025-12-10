@@ -364,6 +364,13 @@ while True:
     synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
+        # We need to signal the start of a step for CUDAGraphs to avoid reusing input tensors unsafely
+        # This is especially important for 'reduce-overhead' compilation mode
+        try:
+            torch.compiler.cudagraph_mark_step_begin()
+        except AttributeError:
+            pass
+
         with autocast_ctx:
             if use_infovore:
                 loss, infovore_metrics = infovore_agent.compute_nrq_loss(model, x, y)
