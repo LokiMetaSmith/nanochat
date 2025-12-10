@@ -19,6 +19,7 @@ dependencies = [
     "safetensors>=0.4.0",
     "gguf>=0.10.0",
     "amd-quark>=0.10.0",
+    "bitsandbytes>=0.48.0",
 ]
 
 [build-system]

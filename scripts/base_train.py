@@ -95,24 +95,27 @@ save_every = -1 # every how many steps to save model checkpoints (-1 = disable, 
 # Output
 model_tag = "" # optionally override the model tag for the output checkpoint directory name
 compile = True # whether to compile the model. On AMD ROCm this might be unstable.
-compile_mode = None # torch.compile mode (e.g., "default", "reduce-overhead", "max-autotune")
+compile_mode = "reduce-overhead" # torch.compile mode (e.g., "default", "reduce-overhead", "max-autotune")
 compile_dynamic = False # whether to use dynamic shapes in torch.compile (dynamic=True/False)
 # Optimizer backends
 matrix_optimizer_backend = "muon" # "muon" or "nested_momentum"
 general_optimizer_backend = "adamw" # "adamw" or "nested_momentum"
+use_8bit_optimizer = False # use 8-bit optimizer (bitsandbytes) for general parameters
 nested_betas = (0.9, 0.99) # For nested_momentum
 nested_level_weights = (0.5, 0.5) # For nested_momentum
 # Infovore (Curriculum Learning)
 use_infovore = False # Enable Novelty-Relation Quotient curriculum
 infovore_beta = 0.99 # Momentum for memory manifold
 
-# Auto-detect Strix Halo to disable compilation by default for stability
+# Auto-detect Strix Halo to enable specific optimizations
 try:
     if shutil.which('rocminfo'):
         _res = subprocess.run(['rocminfo'], capture_output=True, text=True)
         if 'gfx1151' in _res.stdout:
-            print("AMD Strix Halo (gfx1151) detected. Defaulting compile=False for stability.")
-            compile = False
+            print("AMD Strix Halo (gfx1151) detected. Optimizing for APU.")
+            # We no longer disable compile=True.
+            # Instead we want to ensure experimental features and 8-bit optimizer if appropriate
+            # (though 8-bit optimizer is opt-in via flag)
 except Exception:
     pass
 
@@ -221,7 +224,8 @@ print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 optimizers = model.setup_optimizers(
     unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay,
     matrix_optimizer_backend=matrix_optimizer_backend, general_optimizer_backend=general_optimizer_backend,
-    nested_betas=nested_betas, nested_level_weights=nested_level_weights
+    nested_betas=nested_betas, nested_level_weights=nested_level_weights,
+    use_8bit_optimizer=use_8bit_optimizer
 )
 # Note: optimizers[0] is general (AdamW/Nested), optimizers[1] is matrix (Muon/Nested)
 general_optimizer, matrix_optimizer = optimizers

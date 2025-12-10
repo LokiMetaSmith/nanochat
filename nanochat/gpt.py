@@ -14,14 +14,15 @@ Notable features:
 import math
 from functools import partial
 from dataclasses import dataclass
+from contextlib import nullcontext
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributed.optim import ZeroRedundancyOptimizer
 
 from nanochat.common import get_dist_info, print0
 from nanochat.muon import Muon, DistMuon
-from nanochat.adamw import DistAdamW
 from nanochat.nl_opt import NestedMomentum, DistNestedMomentum
 from torch.utils.checkpoint import checkpoint
 
@@ -198,23 +199,30 @@ class CausalSelfAttention(nn.Module):
 
         # Attention: queries attend to keys/values autoregressively. A few cases to handle:
         enable_gqa = self.n_head != self.n_kv_head # Group Query Attention (GQA): duplicate key/value heads to match query heads if desired
-        if kv_cache is None or Tq == Tk:
-            # During training (no KV cache), attend as usual with causal attention
-            # And even if there is KV cache, we can still use this simple version when Tq == Tk
-            y = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=enable_gqa)
-        elif Tq == 1:
-            # During inference but with a single query in this forward pass:
-            # The query has to attend to all the keys/values in the cache
-            y = F.scaled_dot_product_attention(q, k, v, is_causal=False, enable_gqa=enable_gqa)
-        else:
-            # During inference AND we have a chunk of queries in this forward pass:
-            # First, each query attends to all the cached keys/values (i.e. full prefix)
-            attn_mask = torch.zeros((Tq, Tk), dtype=torch.bool, device=q.device) # True = keep, False = mask
-            prefix_len = Tk - Tq
-            attn_mask[:, :prefix_len] = True
-            # Then, causal attention within this chunk
-            attn_mask[:, prefix_len:] = torch.tril(torch.ones((Tq, Tq), dtype=torch.bool, device=q.device))
-            y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, enable_gqa=enable_gqa)
+
+        # Context manager for Flash Attention
+        # On AMD Strix Halo/RDNA 3.5, we want to ensure we hit the CK Flash Attention kernel
+        # We explicitly disable math to avoid fallback to slow implementation
+        sdp_ctx = torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=True) if x.device.type == "cuda" else nullcontext()
+
+        with sdp_ctx:
+            if kv_cache is None or Tq == Tk:
+                # During training (no KV cache), attend as usual with causal attention
+                # And even if there is KV cache, we can still use this simple version when Tq == Tk
+                y = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=enable_gqa)
+            elif Tq == 1:
+                # During inference but with a single query in this forward pass:
+                # The query has to attend to all the keys/values in the cache
+                y = F.scaled_dot_product_attention(q, k, v, is_causal=False, enable_gqa=enable_gqa)
+            else:
+                # During inference AND we have a chunk of queries in this forward pass:
+                # First, each query attends to all the cached keys/values (i.e. full prefix)
+                attn_mask = torch.zeros((Tq, Tk), dtype=torch.bool, device=q.device) # True = keep, False = mask
+                prefix_len = Tk - Tq
+                attn_mask[:, :prefix_len] = True
+                # Then, causal attention within this chunk
+                attn_mask[:, prefix_len:] = torch.tril(torch.ones((Tq, Tq), dtype=torch.bool, device=q.device))
+                y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, enable_gqa=enable_gqa)
 
         # Re-assemble the heads side by side and project back to residual stream
         y = y.transpose(1, 2).contiguous().view(B, T, -1)
@@ -327,7 +335,8 @@ class GPT(nn.Module):
 
     def setup_optimizers(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0,
                          matrix_optimizer_backend="muon", general_optimizer_backend="adamw",
-                         nested_betas=(0.9, 0.99), nested_level_weights=(0.5, 0.5)):
+                         nested_betas=(0.9, 0.99), nested_level_weights=(0.5, 0.5),
+                         use_8bit_optimizer=False):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
         use_dist_optim = ddp and world_size > 1
@@ -351,8 +360,25 @@ class GPT(nn.Module):
 
         if general_optimizer_backend == "adamw":
             adamw_kwargs = dict(betas=(0.8, 0.95), eps=1e-10, weight_decay=weight_decay)
-            AdamWFactory = DistAdamW if use_dist_optim else partial(torch.optim.AdamW, fused=True)
-            general_optimizer = AdamWFactory(general_groups, **adamw_kwargs)
+            if use_8bit_optimizer:
+                try:
+                    import bitsandbytes as bnb
+                except ImportError:
+                    raise ImportError("bitsandbytes is not installed. Please install it to use 8-bit optimizers.")
+
+                optimizer_cls = bnb.optim.AdamW8bit
+                if use_dist_optim:
+                     # ZeRO-2 with 8-bit optimizer
+                     # Note: ZeroRedundancyOptimizer supports optimizer_class
+                     general_optimizer = ZeroRedundancyOptimizer(general_groups, optimizer_class=optimizer_cls, **adamw_kwargs)
+                else:
+                     general_optimizer = optimizer_cls(general_groups, **adamw_kwargs)
+            else:
+                if use_dist_optim:
+                    # Use ZeroRedundancyOptimizer with fused AdamW
+                    general_optimizer = ZeroRedundancyOptimizer(general_groups, optimizer_class=torch.optim.AdamW, fused=True, **adamw_kwargs)
+                else:
+                    general_optimizer = torch.optim.AdamW(general_groups, fused=True, **adamw_kwargs)
         elif general_optimizer_backend == "nested_momentum":
              nm_kwargs = dict(betas=nested_betas, level_weights=nested_level_weights, weight_decay=weight_decay)
              NMFactory = DistNestedMomentum if use_dist_optim else NestedMomentum
