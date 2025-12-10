@@ -23,6 +23,7 @@ from torch.distributed.optim import ZeroRedundancyOptimizer
 
 from nanochat.common import get_dist_info, print0
 from nanochat.muon import Muon, DistMuon
+from nanochat.adamw import DistAdamW
 from nanochat.nl_opt import NestedMomentum, DistNestedMomentum
 from torch.utils.checkpoint import checkpoint
 
@@ -379,6 +380,11 @@ class GPT(nn.Module):
                     general_optimizer = ZeroRedundancyOptimizer(general_groups, optimizer_class=torch.optim.AdamW, fused=True, **adamw_kwargs)
                 else:
                     general_optimizer = torch.optim.AdamW(general_groups, fused=True, **adamw_kwargs)
+        elif general_optimizer_backend == "dist_adamw":
+             # Legacy custom implementation
+             adamw_kwargs = dict(betas=(0.8, 0.95), eps=1e-10, weight_decay=weight_decay)
+             AdamWFactory = DistAdamW if use_dist_optim else partial(torch.optim.AdamW, fused=True)
+             general_optimizer = AdamWFactory(general_groups, **adamw_kwargs)
         elif general_optimizer_backend == "nested_momentum":
              nm_kwargs = dict(betas=nested_betas, level_weights=nested_level_weights, weight_decay=weight_decay)
              NMFactory = DistNestedMomentum if use_dist_optim else NestedMomentum

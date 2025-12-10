@@ -99,7 +99,7 @@ compile_mode = "reduce-overhead" # torch.compile mode (e.g., "default", "reduce-
 compile_dynamic = False # whether to use dynamic shapes in torch.compile (dynamic=True/False)
 # Optimizer backends
 matrix_optimizer_backend = "muon" # "muon" or "nested_momentum"
-general_optimizer_backend = "adamw" # "adamw" or "nested_momentum"
+general_optimizer_backend = "adamw" # "adamw" (ZeRO-2), "dist_adamw" (legacy custom), or "nested_momentum"
 use_8bit_optimizer = False # use 8-bit optimizer (bitsandbytes) for general parameters
 nested_betas = (0.9, 0.99) # For nested_momentum
 nested_level_weights = (0.5, 0.5) # For nested_momentum
