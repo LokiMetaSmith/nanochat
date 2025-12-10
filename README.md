@@ -27,7 +27,7 @@ screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
 See the [screen cheatsheet](https://gist.github.com/jctosta/af918e1618682638aa82) if you are less familiar. You can watch it go inside the screen session, or detach with `Ctrl-a d` and `tail speedrun.log` to view progress. Now wait 4 hours. Once it's done, you can talk to your LLM via the ChatGPT-like web UI. Make sure again that your local uv virtual environment is active (run `source .venv/bin/activate`), and serve it:
 
 ```bash
-python -m scripts.chat_web
+python -m scripts.serve
 ```
 
 And then visit the URL shown. Make sure to access it correctly, e.g. on Lambda use the public IP of the node you're on, followed by the port, so for example [http://209.20.xxx.xxx:8000/](http://209.20.xxx.xxx:8000/), etc. Then talk to your LLM as you'd normally talk to ChatGPT! Get it to write stories or poems. Ask it to tell you who you are to see a hallucination. Ask it why the sky is blue. Or why it's green. The speedrun is a 4e19 FLOPs capability model so it's a bit like talking to a kindergartener :).
@@ -142,6 +142,10 @@ python -m pytest tests/test_rustbpe.py -v -s
 .
 ├── LICENSE
 ├── README.md
+├── configs
+│   ├── medium.json                 # Depth 10 model configuration
+│   ├── speedrun.json               # Depth 20 model configuration
+│   └── tiny.json                   # Tiny model configuration
 ├── dev
 │   ├── gen_synthetic_data.py       # Example synthetic data for identity
 │   ├── generate_logo.html
@@ -149,6 +153,9 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── repackage_data_reference.py # Pretraining data shard generation
 │   └── runcpu.sh                   # Small example of how to run on CPU/MPS
 ├── nanochat
+│   ├── scheduler
+│   │   ├── __init__.py
+│   │   └── cosine.py               # Cosine learning rate scheduler
 │   ├── __init__.py                 # empty
 │   ├── adamw.py                    # Distributed AdamW optimizer
 │   ├── checkpoint_manager.py       # Save/Load model checkpoints
@@ -160,9 +167,11 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── engine.py                   # Efficient model inference with KV Cache
 │   ├── execution.py                # Allows the LLM to execute Python code as tool
 │   ├── gpt.py                      # The GPT nn.Module Transformer
+│   ├── infovore.py                 # Online Curriculum Learning (NRQ metric)
 │   ├── logo.svg
 │   ├── loss_eval.py                # Evaluate bits per byte (instead of loss)
 │   ├── muon.py                     # Distributed Muon optimizer
+│   ├── nl_opt.py                   # Nested Momentum optimizer
 │   ├── report.py                   # Utilities for writing the nanochat Report
 │   ├── tokenizer.py                # BPE Tokenizer wrapper in style of GPT-4
 │   └── ui.html                     # HTML/CSS/JS for nanochat frontend
@@ -182,10 +191,13 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── chat_eval.py                # Chat model (SFT/Mid): eval tasks
 │   ├── chat_rl.py                  # Chat model (SFT/Mid): reinforcement learning
 │   ├── chat_sft.py                 # Chat model: train SFT
-│   ├── chat_web.py                 # Chat model (SFT/Mid): talk to over WebUI
+│   ├── export_model.py             # Export models to Safetensors/GGUF
 │   ├── mid_train.py                # Chat model: midtraining
+│   ├── quantize_mxfp4.py           # Post-Training Quantization (MXFP4)
+│   ├── serve.py                    # Inference Server & Web UI
 │   ├── tok_eval.py                 # Tokenizer: evaluate compression rate
-│   └── tok_train.py                # Tokenizer: train it
+│   ├── tok_train.py                # Tokenizer: train it
+│   └── tune_system.py              # System Auto-Tuner (Throughput/LR)
 ├── speedrun.sh                     # Train the ~$100 nanochat d20
 ├── tasks
 │   ├── arc.py                      # Multiple choice science questions
