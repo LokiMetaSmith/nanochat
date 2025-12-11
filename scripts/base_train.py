@@ -82,6 +82,7 @@ robotics_sensor_dim = 64
 robotics_surface_dim = 128
 robotics_sensor_tokens = 1
 robotics_surface_tokens = 4
+robotics_action_loss_weight = 1.0 # Loss weight for latent action prediction
 
 # Training horizon. Only one of these 3 will be used, in this order of precedence.
 num_iterations = -1 # explicit number of steps of the optimization (-1 = disable)
@@ -217,7 +218,8 @@ model_config_kwargs = dict(
     robotics_sensor_dim=robotics_sensor_dim,
     robotics_surface_dim=robotics_surface_dim,
     robotics_sensor_tokens=robotics_sensor_tokens,
-    robotics_surface_tokens=robotics_surface_tokens
+    robotics_surface_tokens=robotics_surface_tokens,
+    robotics_action_loss_weight=robotics_action_loss_weight
 )
 with torch.device("meta"):
     model_config = GPTConfig(**model_config_kwargs)
@@ -452,11 +454,15 @@ while True:
             # Prepare Robotics Data (Synthetic for now)
             sensors = None
             surface = None
+            action_targets = None
+
             if use_robotics:
                 if robotics_sensor_dim > 0:
                     sensors = torch.randn(device_batch_size, robotics_sensor_dim, device=device, dtype=torch.float32)
                 if robotics_surface_dim > 0:
                     surface = torch.randn(device_batch_size, robotics_surface_dim, device=device, dtype=torch.float32)
+                    # For training, assume we also have the 'next' surface vector as target
+                    action_targets = torch.randn(device_batch_size, robotics_surface_dim, device=device, dtype=torch.float32)
 
             # Prepare targets (pad for vision + robotics if needed)
             # Total padding = vision_patches + robotics_tokens
@@ -468,9 +474,9 @@ while True:
                 vision_padding = torch.full((y.shape[0], padding_len), -1, dtype=y.dtype, device=y.device)
                 y_padded = torch.cat([vision_padding, y], dim=1)
 
-                loss = model(x, images=images, sensors=sensors, surface=surface, targets=y_padded)
+                loss = model(x, images=images, sensors=sensors, surface=surface, targets=y_padded, action_targets=action_targets)
             else:
-                loss = model(x, images=images, sensors=sensors, surface=surface, targets=y)
+                loss = model(x, images=images, sensors=sensors, surface=surface, targets=y, action_targets=action_targets)
 
         train_loss = loss.detach() # for logging
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here

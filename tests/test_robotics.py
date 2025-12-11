@@ -41,7 +41,8 @@ class TestRoboticsIntegration(unittest.TestCase):
             robotics_sensor_dim=self.sensor_dim,
             robotics_surface_dim=self.surface_dim,
             robotics_sensor_tokens=self.sensor_tokens,
-            robotics_surface_tokens=self.surface_tokens
+            robotics_surface_tokens=self.surface_tokens,
+            robotics_action_loss_weight=1.0
         )
         self.model = GPT(self.config).to(self.device)
 
@@ -54,6 +55,7 @@ class TestRoboticsIntegration(unittest.TestCase):
         images = torch.randn(B, C, H, W).to(self.device)
         sensors = torch.randn(B, self.sensor_dim).to(self.device)
         surface = torch.randn(B, self.surface_dim).to(self.device)
+        action_targets = torch.randn(B, self.surface_dim).to(self.device)
 
         # Targets
         padding_len = self.num_vision_patches + self.num_robot_tokens
@@ -62,7 +64,7 @@ class TestRoboticsIntegration(unittest.TestCase):
         targets = torch.cat([vision_padding, targets_text], dim=1)
 
         # Forward
-        loss = self.model(idx, images=images, sensors=sensors, surface=surface, targets=targets)
+        loss = self.model(idx, images=images, sensors=sensors, surface=surface, targets=targets, action_targets=action_targets)
 
         self.assertTrue(torch.isfinite(loss))
 
@@ -72,15 +74,13 @@ class TestRoboticsIntegration(unittest.TestCase):
         # Check gradients
         # Vision
         self.assertIsNotNone(self.model.vision_encoder.patch_embed.proj.weight.grad)
-        # Robotics
+        # Robotics Input
         self.assertIsNotNone(self.model.robotics_interface.sensor_proj.net[0].weight.grad)
-        self.assertIsNotNone(self.model.robotics_interface.surface_proj.net[0].weight.grad)
+        # Robotics Output (Action Head)
+        self.assertIsNotNone(self.model.robotics_interface.action_head.net[0].weight.grad)
 
     def test_robotics_only_forward(self):
         # Test case where vision is disabled but robotics is enabled (config allows mixed)
-        # Here we just pass None for images to simulate missing data,
-        # but the model is configured for both.
-
         B = 2
         idx = torch.randint(0, 1000, (B, self.max_seq_len)).to(self.device)
         sensors = torch.randn(B, self.sensor_dim).to(self.device)

@@ -4,9 +4,11 @@ Robotics Interface Module for Nanochat (NanoBot).
 This module implements the interface for:
 1.  Raw Sensor Telemetry (Proprioception: Joints, Accel).
 2.  Latent Surface Vectors (Communication between External NN and LLM).
+3.  Action Head (Latent Write back to External NN).
 
 It treats these inputs as additional modalities that are projected into the
 LLM's embedding space and prepended as tokens.
+It also provides a head to predict the next surface vector (action/coherence).
 """
 
 import torch
@@ -48,9 +50,29 @@ class Projector(nn.Module):
         x = x.view(B, self.n_tokens, self.output_dim) # (B, T, C)
         return x
 
+class ActionHead(nn.Module):
+    """
+    Predicts the next Latent Surface vector from the LLM's hidden state.
+    n_embd -> surface_dim
+    """
+    def __init__(self, input_dim, output_dim):
+        super().__init__()
+        # Simple linear head, similar to LM head but for continuous vector
+        # Could make it an MLP for more power
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, input_dim),
+            nn.GELU(),
+            nn.Linear(input_dim, output_dim)
+        )
+
+    def forward(self, x):
+        # x: (B, n_embd) -> usually the last token's embedding
+        return self.net(x)
+
 class RoboticsInterface(nn.Module):
     """
     Combines Sensor and Surface inputs into a sequence of embeddings.
+    Also handles Action prediction.
     """
     def __init__(self, config: RoboticsConfig, llm_dim: int):
         super().__init__()
@@ -75,8 +97,14 @@ class RoboticsInterface(nn.Module):
                 output_dim=llm_dim,
                 n_tokens=config.surface_tokens
             )
+            # Action Head (LLM Space -> Latent Neural State)
+            self.action_head = ActionHead(
+                input_dim=llm_dim,
+                output_dim=config.surface_dim
+            )
         else:
             self.surface_proj = None
+            self.action_head = None
 
     def forward(self, sensors=None, surface=None):
         """
@@ -106,6 +134,18 @@ class RoboticsInterface(nn.Module):
 
         # Concatenate along time dimension
         return torch.cat(embeddings_list, dim=1)
+
+    def predict_action(self, hidden_state):
+        """
+        Predict the next surface vector from the last hidden state.
+        Args:
+            hidden_state: (B, n_embd) - typically the embedding of the last token
+        Returns:
+            action_pred: (B, surface_dim)
+        """
+        if self.action_head is None:
+            return None
+        return self.action_head(hidden_state)
 
     def get_num_tokens(self):
         count = 0
