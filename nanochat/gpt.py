@@ -512,10 +512,17 @@ class GPT(nn.Module):
                 return total_loss, x
             return total_loss
         else:
-            # inference: just return the logits directly
+            # inference: return logits AND action_pred if robotics enabled
             logits = self.lm_head(x)
             logits = softcap * torch.tanh(logits / softcap)
-            return logits
+
+            action_pred = None
+            if self.config.use_robotics and self.robotics_interface is not None:
+                # Predict next surface vector from the LAST token's embedding
+                last_hidden_state = x[:, -1, :]
+                action_pred = self.robotics_interface.predict_action(last_hidden_state, target_action=None)
+
+            return logits, action_pred
 
     @torch.inference_mode()
     def generate(self, tokens, max_tokens, images=None, sensors=None, surface=None, temperature=1.0, top_k=None, seed=42):
@@ -537,7 +544,8 @@ class GPT(nn.Module):
             current_sensors = sensors if i == 0 else None
             current_surface = surface if i == 0 else None
 
-            logits = self.forward(ids, images=current_images, sensors=current_sensors, surface=current_surface) # (B, T, vocab_size)
+            # Forward returns tuple in inference mode now
+            logits, action_pred = self.forward(ids, images=current_images, sensors=current_sensors, surface=current_surface)
             logits = logits[:, -1, :] # (B, vocab_size)
 
             if top_k is not None:
@@ -552,4 +560,6 @@ class GPT(nn.Module):
 
             ids = torch.cat((ids, next_ids), dim=1)
             token = next_ids.item()
-            yield token
+
+            # Yield token and potentially action
+            yield token, action_pred
