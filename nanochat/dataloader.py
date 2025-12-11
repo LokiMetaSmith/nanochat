@@ -62,7 +62,8 @@ def tokenizing_distributed_data_loader_with_state(B, T, split, tokenizer_threads
     token_buffer = deque() # we stream tokens on the right and pop from the left
 
     # CUDA supports memory pinning for asynchronous transfers between CPU and GPU
-    use_cuda_optimizations = device == "cuda" or (device and "cuda" in device)
+    # The device can be a string or a torch.device object, so we cast to string
+    use_cuda_optimizations = "cuda" in str(device)
 
     while True:
         # Accumulate enough tokens for one iteration before yielding.
