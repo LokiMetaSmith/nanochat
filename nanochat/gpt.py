@@ -10,6 +10,7 @@ Notable features:
 - no bias in linear layers
 - Group-Query Attention (GQA) support for more efficient inference
 - Multimodal support (Vision Encoder + Projector)
+- Robotics support (Sensor + Latent Projectors + Action Head)
 """
 
 import math
@@ -28,6 +29,7 @@ from nanochat.muon import Muon, DistMuon
 from nanochat.adamw import DistAdamW
 from nanochat.nl_opt import NestedMomentum, DistNestedMomentum
 from nanochat.vision import VisionConfig, VisionTransformer, VisionProjector
+from nanochat.robotics import RoboticsConfig, RoboticsInterface
 from torch.utils.checkpoint import checkpoint
 
 def _compute_loss_chunk(x_chunk, targets_chunk, lm_head, softcap, ignore_index, reduction):
@@ -112,6 +114,13 @@ class GPTConfig:
     vision_layers: int = 12
     vision_heads: int = 12
     vision_mlp_ratio: float = 4.0
+    # Robotics params
+    use_robotics: bool = False
+    robotics_sensor_dim: int = 64
+    robotics_surface_dim: int = 128
+    robotics_sensor_tokens: int = 1
+    robotics_surface_tokens: int = 4
+    robotics_action_loss_weight: float = 1.0 # Weight for action prediction loss
 
 
 def norm(x):
@@ -248,11 +257,22 @@ class GPT(nn.Module):
                 vision_dim=config.vision_width,
                 llm_dim=config.n_embd
             )
-            # Register buffer for a special <image_placeholder> token if needed,
-            # but for now we'll just prepend embeddings.
         else:
             self.vision_encoder = None
             self.vision_projector = None
+
+        # --- Robotics Support ---
+        if config.use_robotics:
+            robotics_cfg = RoboticsConfig(
+                sensor_dim=config.robotics_sensor_dim,
+                surface_dim=config.robotics_surface_dim,
+                sensor_tokens=config.robotics_sensor_tokens,
+                surface_tokens=config.robotics_surface_tokens,
+                projector_dim=config.n_embd
+            )
+            self.robotics_interface = RoboticsInterface(robotics_cfg, config.n_embd)
+        else:
+            self.robotics_interface = None
 
         # To support meta device initialization, we init the rotary embeddings here, but it's fake
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
@@ -337,13 +357,16 @@ class GPT(nn.Module):
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
 
-        # Add Vision Params to Embedding Group (or separate?)
-        # Generally, Vision Encoder + Projector should be treated like general parameters (AdamW)
+        # Add Vision Params to Embedding Group
         if self.config.use_vision:
             if self.vision_encoder is not None:
                 embedding_params.extend(list(self.vision_encoder.parameters()))
             if self.vision_projector is not None:
                 embedding_params.extend(list(self.vision_projector.parameters()))
+
+        # Add Robotics Params to Embedding Group
+        if self.config.use_robotics and self.robotics_interface is not None:
+            embedding_params.extend(list(self.robotics_interface.parameters()))
 
         assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params)
 
@@ -410,7 +433,7 @@ class GPT(nn.Module):
                 group["initial_lr"] = group["lr"]
         return optimizers
 
-    def forward(self, idx, images=None, targets=None, kv_cache=None, loss_reduction='mean', return_embeddings=False):
+    def forward(self, idx, images=None, sensors=None, surface=None, targets=None, action_targets=None, kv_cache=None, loss_reduction='mean', return_embeddings=False):
         # We need to signal the start of a step for CUDAGraphs to avoid reusing input tensors unsafely
         # This is especially important for 'reduce-overhead' compilation mode
         try:
@@ -423,20 +446,25 @@ class GPT(nn.Module):
         # Get Text Embeddings
         x = self.transformer.wte(idx)
 
-        # Handle Vision
+        # 1. Handle Vision
         if self.config.use_vision and images is not None and self.vision_encoder is not None:
              # images: (B, C, H, W)
              vis_feats = self.vision_encoder(images) # (B, N_patches, vision_width)
              vis_feats = self.vision_projector(vis_feats) # (B, N_patches, n_embd)
-
-             # Concatenate visual tokens with text tokens
-             # Strategy: Prepend visual tokens
-             # NOTE: This changes the sequence length!
-             # We assume targets have been adjusted or ignored for visual tokens in the dataset
+             # Prepend visual tokens
              x = torch.cat([vis_feats, x], dim=1)
 
-             # Update T for rotary embeddings
-             B, T, C = x.size()
+        # 2. Handle Robotics Inputs (Sensors + Surface)
+        if self.config.use_robotics and self.robotics_interface is not None:
+            # sensors: (B, sensor_dim) or None
+            # surface: (B, surface_dim) or None
+            robot_feats = self.robotics_interface(sensors, surface) # (B, T_robot, n_embd)
+            if robot_feats is not None:
+                # Prepend robot tokens (before vision)
+                x = torch.cat([robot_feats, x], dim=1)
+
+        # Update T for rotary embeddings
+        B, T, C = x.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
         assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
@@ -452,31 +480,45 @@ class GPT(nn.Module):
             x = block(x, cos_sin, kv_cache)
         x = norm(x)
 
+        # 3. Handle Robotics Outputs (Action Prediction)
+        action_loss = 0.0
+        if self.config.use_robotics and self.robotics_interface is not None and action_targets is not None:
+            # Predict next surface vector from the LAST token's embedding
+            # x: (B, T, C) -> last token: (B, C)
+            last_hidden_state = x[:, -1, :]
+            action_pred = self.robotics_interface.predict_action(last_hidden_state)
+
+            # Compute MSE Loss
+            # action_targets: (B, surface_dim)
+            if action_pred is not None:
+                action_loss_fn = nn.MSELoss()
+                action_loss = action_loss_fn(action_pred, action_targets)
+                action_loss = action_loss * self.config.robotics_action_loss_weight
+
         # Forward the lm_head (compute logits)
         softcap = 15.0
         if targets is not None:
             # training mode: compute and return the loss
-            # We use chunked cross entropy to save memory.
-            # Instead of materializing (B, T, vocab_size) logits, we compute loss in chunks
+            # NOTE: Targets must match the total sequence length (Vision + Robot + Text)
+            if targets.size(1) != T:
+                 print0(f"Target mismatch! Expected {T}, got {targets.size(1)}")
 
-            # NOTE: If we prepended vision tokens, the targets must also align.
-            # The DataLoader should have handled this by padding targets with ignore_index (-1)
-            # corresponding to the vision tokens.
-            if self.config.use_vision and images is not None:
-                assert targets.size(1) == T, f"Targets length {targets.size(1)} does not match total sequence length {T} (text+image)"
+            lm_loss = chunked_cross_entropy(x, targets, self.lm_head, softcap=softcap, chunk_size=128, ignore_index=-1, reduction=loss_reduction)
 
-            loss = chunked_cross_entropy(x, targets, self.lm_head, softcap=softcap, chunk_size=128, ignore_index=-1, reduction=loss_reduction)
+            total_loss = lm_loss + action_loss
+
             if return_embeddings:
-                return loss, x
-            return loss
+                return total_loss, x
+            return total_loss
         else:
             # inference: just return the logits directly
+            # TODO: We might want to return action_pred here too if in robot mode
             logits = self.lm_head(x)
             logits = softcap * torch.tanh(logits / softcap)
             return logits
 
     @torch.inference_mode()
-    def generate(self, tokens, max_tokens, images=None, temperature=1.0, top_k=None, seed=42):
+    def generate(self, tokens, max_tokens, images=None, sensors=None, surface=None, temperature=1.0, top_k=None, seed=42):
         """
         Naive autoregressive streaming inference with optional image context.
         """
@@ -489,14 +531,13 @@ class GPT(nn.Module):
 
         ids = torch.tensor([tokens], dtype=torch.long, device=device) # add batch dim
 
-        # If images are provided, we need to handle them in the first forward pass
-        # The KV cache will store the vision tokens
-
         for i in range(max_tokens):
-            # Pass images only on the first step
+            # Pass contexts only on the first step
             current_images = images if i == 0 else None
+            current_sensors = sensors if i == 0 else None
+            current_surface = surface if i == 0 else None
 
-            logits = self.forward(ids, images=current_images) # (B, T, vocab_size)
+            logits = self.forward(ids, images=current_images, sensors=current_sensors, surface=current_surface) # (B, T, vocab_size)
             logits = logits[:, -1, :] # (B, vocab_size)
 
             if top_k is not None:
@@ -512,7 +553,3 @@ class GPT(nn.Module):
             ids = torch.cat((ids, next_ids), dim=1)
             token = next_ids.item()
             yield token
-
-            # Optimization: In a real implementation, we would use KV cache here
-            # to avoid re-processing the image every time.
-            # This implementation re-processes everything (inefficient but correct for naive).
