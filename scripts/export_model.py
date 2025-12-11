@@ -18,17 +18,20 @@ from safetensors.torch import save_file
 from nanochat.checkpoint_manager import load_checkpoint
 from nanochat.common import get_base_dir, autodetect_device_type
 
-def export_to_safetensors(model_state, output_path):
+def export_to_safetensors(model_state, model_config, output_path):
     print(f"Exporting to safetensors: {output_path}")
-    # Safetensors expects a flat dict of tensors
-    # Check for any non-tensor data (which shouldn't happen in model_state usually)
+
+    # Flatten config to string metadata
+    metadata = {k: str(v) for k, v in model_config.items() if v is not None}
+
     tensors = {}
     for k, v in model_state.items():
         if isinstance(v, torch.Tensor):
             tensors[k] = v.contiguous()
         else:
             print(f"Warning: Skipping non-tensor key {k}")
-    save_file(tensors, output_path)
+
+    save_file(tensors, output_path, metadata=metadata)
     print("Done.")
 
 def export_to_gguf(model_state, model_config, output_path):
@@ -43,64 +46,45 @@ def export_to_gguf(model_state, model_config, output_path):
     # Initialize GGUF writer
     gguf_writer = gguf.GGUFWriter(output_path, "nanochat")
 
-    # Architecture
-    # For now, we map to GPT-2 architecture as it's the closest standard one supported by llama.cpp
-    # or we define a custom one. Let's try to stick to gpt2 keys if possible, or generic.
-    # Actually, nanochat is GPT-2 like but with Rotary Embeddings (RoPE) and other mods.
-    # Standard GPT-2 doesn't have RoPE.
-    # Llama architecture has RoPE.
-    # Let's try to map to "llama" architecture if possible, or "gpt2" with extensions.
-    # However, modded-nanogpt has specific layers (RMSNorm, GLU variants etc).
-    #
-    # Current best bet for custom models in llama.cpp is to use the generic architecture definition
-    # if supported, or map to a known one.
-    #
-    # Given the complexity of "modded-nanogpt" (RMSNorm, RoPE, etc.), it closely resembles Llama
-    # but with different naming and potentially different block structure.
-    #
-    # Let's write the raw tensors and minimal metadata. Users might need a custom llama.cpp build
-    # or specific conversion script logic in llama.cpp to read this if it doesn't match standard archs.
-    #
-    # But wait, the task says "efficient inference on Strix Halo NPU (via llama.cpp)".
-    # This implies there is a path.
-    #
-    # Let's set some basic metadata.
-
-    n_layer = model_config.get("n_layer", 12)
-    n_head = model_config.get("n_head", 12)
-    n_embd = model_config.get("n_embd", 768)
-    # n_ctx = model_config.get("sequence_len", 1024)
-    # vocab_size = model_config.get("vocab_size", 50257)
-
-    # We will try to map to 'gpt2' for now, but note the differences.
-    # Actually, if we want it to work with standard llama.cpp, we might need to be more careful.
-    # For now, I will dump the weights with the original names.
-    # Users can use `llama-convert-py` or similar if they need standard remapping,
-    # but GGUF allows custom keys.
-
-    gguf_writer.add_architecture() # Custom architecture name is implied by the constructor or just generic?
-    # GGUFWriter's add_architecture method doesn't take an argument in recent versions.
-    # The architecture is usually inferred or set via specific keys.
-    # However, to be compliant with llama.cpp, we typically need to set 'general.architecture'
-
-    # Manually set the architecture key
-    # Note: Standard llama.cpp builds will likely not recognize "nanochat" architecture
-    # without modifications to the C++ code to support the specific tensor naming and block structure.
-    # This export is primarily for experimental use or with custom llama.cpp forks.
+    # --- Architecture Metadata ---
+    # Standard LLM keys
     gguf_writer.add_string("general.architecture", "nanochat")
-
     gguf_writer.add_uint32("nanochat.context_length", model_config.get("sequence_len", 1024))
-    gguf_writer.add_uint32("nanochat.embedding_length", n_embd)
-    gguf_writer.add_uint32("nanochat.block_count", n_layer)
-    gguf_writer.add_uint32("nanochat.feed_forward_length", 4 * n_embd) # Approximation
-    gguf_writer.add_uint32("nanochat.attention.head_count", n_head)
+    gguf_writer.add_uint32("nanochat.embedding_length", model_config.get("n_embd", 768))
+    gguf_writer.add_uint32("nanochat.block_count", model_config.get("n_layer", 12))
+    gguf_writer.add_uint32("nanochat.feed_forward_length", 4 * model_config.get("n_embd", 768))
+    gguf_writer.add_uint32("nanochat.attention.head_count", model_config.get("n_head", 12))
+    gguf_writer.add_uint32("nanochat.attention.head_count_kv", model_config.get("n_kv_head", 12))
 
-    # Add tensor data
+    # Vision Keys
+    use_vision = model_config.get("use_vision", False)
+    gguf_writer.add_bool("nanochat.use_vision", use_vision)
+    if use_vision:
+        gguf_writer.add_uint32("nanochat.vision.image_size", model_config.get("vision_image_size", 224))
+        gguf_writer.add_uint32("nanochat.vision.patch_size", model_config.get("vision_patch_size", 14))
+        gguf_writer.add_uint32("nanochat.vision.width", model_config.get("vision_width", 768))
+        gguf_writer.add_uint32("nanochat.vision.layers", model_config.get("vision_layers", 12))
+        gguf_writer.add_uint32("nanochat.vision.heads", model_config.get("vision_heads", 12))
+
+    # Robotics Keys
+    use_robotics = model_config.get("use_robotics", False)
+    gguf_writer.add_bool("nanochat.use_robotics", use_robotics)
+    if use_robotics:
+        gguf_writer.add_uint32("nanochat.robotics.sensor_dim", model_config.get("robotics_sensor_dim", 64))
+        gguf_writer.add_uint32("nanochat.robotics.surface_dim", model_config.get("robotics_surface_dim", 128))
+        gguf_writer.add_uint32("nanochat.robotics.sensor_tokens", model_config.get("robotics_sensor_tokens", 1))
+        gguf_writer.add_uint32("nanochat.robotics.surface_tokens", model_config.get("robotics_surface_tokens", 4))
+
+        # Diffusion params
+        use_diffusion = model_config.get("robotics_use_diffusion", False)
+        gguf_writer.add_bool("nanochat.robotics.use_diffusion", use_diffusion)
+        if use_diffusion:
+            gguf_writer.add_uint32("nanochat.robotics.diffusion.timesteps", model_config.get("robotics_diffusion_steps", 100))
+
+    # --- Tensor Data ---
     for k, v in model_state.items():
         if isinstance(v, torch.Tensor):
             # GGUF expects numpy arrays (fp32 or fp16)
-            # nanochat uses bfloat16 often. numpy doesn't fully support bfloat16.
-            # We should convert to float32 or float16.
             data = v.detach().cpu().float().numpy()
             gguf_writer.add_tensor(k, data)
 
@@ -135,7 +119,6 @@ def main():
     print(f"Loading checkpoint from {args.checkpoint_dir}...")
 
     # Load checkpoint
-    # We only need model_state and config
     try:
         model_state, _, meta_data = load_checkpoint(args.checkpoint_dir, args.step, args.device, load_optimizer=False)
     except Exception as e:
@@ -150,7 +133,7 @@ def main():
         args.output = os.path.join(args.checkpoint_dir, filename)
 
     if args.format == "safetensors":
-        export_to_safetensors(model_state, args.output)
+        export_to_safetensors(model_state, model_config, args.output)
     elif args.format == "gguf":
         export_to_gguf(model_state, model_config, args.output)
 
