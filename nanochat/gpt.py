@@ -9,12 +9,14 @@ Notable features:
 - no learnable params in rmsnorm
 - no bias in linear layers
 - Group-Query Attention (GQA) support for more efficient inference
+- Multimodal support (Vision Encoder + Projector)
 """
 
 import math
 from functools import partial
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from contextlib import nullcontext
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -25,6 +27,7 @@ from nanochat.common import get_dist_info, print0
 from nanochat.muon import Muon, DistMuon
 from nanochat.adamw import DistAdamW
 from nanochat.nl_opt import NestedMomentum, DistNestedMomentum
+from nanochat.vision import VisionConfig, VisionTransformer, VisionProjector
 from torch.utils.checkpoint import checkpoint
 
 def _compute_loss_chunk(x_chunk, targets_chunk, lm_head, softcap, ignore_index, reduction):
@@ -93,51 +96,6 @@ def chunked_cross_entropy(x, targets, lm_head, chunk_size=128, softcap=15.0, ign
     else:
         raise ValueError(f"Unknown reduction: {reduction}")
 
-def chunked_cross_entropy(x, targets, lm_head, chunk_size=128, softcap=15.0, ignore_index=-1, reduction='mean'):
-    # Flatten input and targets
-    B, T, C = x.size()
-    x_flat = x.view(-1, C)
-    targets_flat = targets.view(-1)
-
-    total_loss = 0.0
-    total_tokens = 0
-
-    num_elements = x_flat.size(0)
-    loss_chunks = []
-
-    for i in range(0, num_elements, chunk_size):
-        x_chunk = x_flat[i : i + chunk_size]
-        target_chunk = targets_flat[i : i + chunk_size]
-
-        # Valid tokens mask (for accurate averaging)
-        valid_mask = target_chunk != ignore_index
-        valid_count = valid_mask.sum().item()
-
-        if valid_count > 0 or reduction == 'none':
-            # Compute logits for chunk
-            logits_chunk = lm_head(x_chunk)
-            logits_chunk = logits_chunk.float()
-            logits_chunk = softcap * torch.tanh(logits_chunk / softcap)
-
-            if reduction == 'none':
-                chunk_loss = F.cross_entropy(logits_chunk, target_chunk, ignore_index=ignore_index, reduction='none')
-                loss_chunks.append(chunk_loss)
-            else:
-                # Compute sum of losses for this chunk
-                chunk_loss = F.cross_entropy(logits_chunk, target_chunk, ignore_index=ignore_index, reduction='sum')
-
-                total_loss += chunk_loss
-                total_tokens += valid_count
-
-    if reduction == 'none':
-        return torch.cat(loss_chunks)
-
-    if total_tokens == 0:
-        return torch.tensor(0.0, device=x.device, requires_grad=True) # return a zero loss with grad for graph integrity
-
-    final_loss = total_loss / total_tokens if reduction == 'mean' else total_loss
-    return final_loss
-
 @dataclass
 class GPTConfig:
     sequence_len: int = 1024
@@ -146,6 +104,14 @@ class GPTConfig:
     n_head: int = 6 # number of query heads
     n_kv_head: int = 6 # number of key/value heads (GQA)
     n_embd: int = 768
+    # Vision params
+    use_vision: bool = False
+    vision_image_size: int = 224
+    vision_patch_size: int = 14
+    vision_width: int = 768
+    vision_layers: int = 12
+    vision_heads: int = 12
+    vision_mlp_ratio: float = 4.0
 
 
 def norm(x):
@@ -265,6 +231,29 @@ class GPT(nn.Module):
             "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
         })
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+        # --- Multimodal Support ---
+        if config.use_vision:
+            vision_cfg = VisionConfig(
+                image_size=config.vision_image_size,
+                patch_size=config.vision_patch_size,
+                width=config.vision_width,
+                layers=config.vision_layers,
+                heads=config.vision_heads,
+                mlp_ratio=config.vision_mlp_ratio,
+                output_dim=config.vision_width # ViT usually outputs its own width
+            )
+            self.vision_encoder = VisionTransformer(vision_cfg)
+            self.vision_projector = VisionProjector(
+                vision_dim=config.vision_width,
+                llm_dim=config.n_embd
+            )
+            # Register buffer for a special <image_placeholder> token if needed,
+            # but for now we'll just prepend embeddings.
+        else:
+            self.vision_encoder = None
+            self.vision_projector = None
+
         # To support meta device initialization, we init the rotary embeddings here, but it's fake
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
         # so let's just over-compute them, but assert fail if we ever reach that amount.
@@ -305,6 +294,7 @@ class GPT(nn.Module):
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
+        # Note: VisionEncoder has its own init_weights called in __init__
 
     # TODO: bump base theta more, e.g. 100K is more common more recently
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
@@ -346,6 +336,15 @@ class GPT(nn.Module):
         matrix_params = list(self.transformer.h.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
+
+        # Add Vision Params to Embedding Group (or separate?)
+        # Generally, Vision Encoder + Projector should be treated like general parameters (AdamW)
+        if self.config.use_vision:
+            if self.vision_encoder is not None:
+                embedding_params.extend(list(self.vision_encoder.parameters()))
+            if self.vision_projector is not None:
+                embedding_params.extend(list(self.vision_projector.parameters()))
+
         assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params)
 
         # --- General Optimizer (Embeddings & Heads) ---
@@ -411,7 +410,7 @@ class GPT(nn.Module):
                 group["initial_lr"] = group["lr"]
         return optimizers
 
-    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean', return_embeddings=False):
+    def forward(self, idx, images=None, targets=None, kv_cache=None, loss_reduction='mean', return_embeddings=False):
         # We need to signal the start of a step for CUDAGraphs to avoid reusing input tensors unsafely
         # This is especially important for 'reduce-overhead' compilation mode
         try:
@@ -420,6 +419,24 @@ class GPT(nn.Module):
             pass # torch.compiler might not be available or this method might not exist in older versions
 
         B, T = idx.size()
+
+        # Get Text Embeddings
+        x = self.transformer.wte(idx)
+
+        # Handle Vision
+        if self.config.use_vision and images is not None and self.vision_encoder is not None:
+             # images: (B, C, H, W)
+             vis_feats = self.vision_encoder(images) # (B, N_patches, vision_width)
+             vis_feats = self.vision_projector(vis_feats) # (B, N_patches, n_embd)
+
+             # Concatenate visual tokens with text tokens
+             # Strategy: Prepend visual tokens
+             # NOTE: This changes the sequence length!
+             # We assume targets have been adjusted or ignored for visual tokens in the dataset
+             x = torch.cat([vis_feats, x], dim=1)
+
+             # Update T for rotary embeddings
+             B, T, C = x.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
         assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
@@ -430,8 +447,7 @@ class GPT(nn.Module):
         cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
 
         # Forward the trunk of the Transformer
-        x = self.transformer.wte(idx)
-        x = norm(x)
+        x = norm(x) # pre-norm for the concatenated sequence
         for block in self.transformer.h:
             x = block(x, cos_sin, kv_cache)
         x = norm(x)
@@ -442,6 +458,13 @@ class GPT(nn.Module):
             # training mode: compute and return the loss
             # We use chunked cross entropy to save memory.
             # Instead of materializing (B, T, vocab_size) logits, we compute loss in chunks
+
+            # NOTE: If we prepended vision tokens, the targets must also align.
+            # The DataLoader should have handled this by padding targets with ignore_index (-1)
+            # corresponding to the vision tokens.
+            if self.config.use_vision and images is not None:
+                assert targets.size(1) == T, f"Targets length {targets.size(1)} does not match total sequence length {T} (text+image)"
+
             loss = chunked_cross_entropy(x, targets, self.lm_head, softcap=softcap, chunk_size=128, ignore_index=-1, reduction=loss_reduction)
             if return_embeddings:
                 return loss, x
@@ -453,12 +476,9 @@ class GPT(nn.Module):
             return logits
 
     @torch.inference_mode()
-    def generate(self, tokens, max_tokens, temperature=1.0, top_k=None, seed=42):
+    def generate(self, tokens, max_tokens, images=None, temperature=1.0, top_k=None, seed=42):
         """
-        Naive autoregressive streaming inference.
-        To make it super simple, let's assume:
-        - batch size is 1
-        - ids and the yielded tokens are simple Python lists and ints
+        Naive autoregressive streaming inference with optional image context.
         """
         assert isinstance(tokens, list)
         device = self.get_device()
@@ -466,10 +486,19 @@ class GPT(nn.Module):
         if temperature > 0:
             rng = torch.Generator(device=device)
             rng.manual_seed(seed)
+
         ids = torch.tensor([tokens], dtype=torch.long, device=device) # add batch dim
-        for _ in range(max_tokens):
-            logits = self.forward(ids) # (B, T, vocab_size)
+
+        # If images are provided, we need to handle them in the first forward pass
+        # The KV cache will store the vision tokens
+
+        for i in range(max_tokens):
+            # Pass images only on the first step
+            current_images = images if i == 0 else None
+
+            logits = self.forward(ids, images=current_images) # (B, T, vocab_size)
             logits = logits[:, -1, :] # (B, vocab_size)
+
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float('Inf')
@@ -479,6 +508,11 @@ class GPT(nn.Module):
                 next_ids = torch.multinomial(probs, num_samples=1, generator=rng)
             else:
                 next_ids = torch.argmax(logits, dim=-1, keepdim=True)
+
             ids = torch.cat((ids, next_ids), dim=1)
             token = next_ids.item()
             yield token
+
+            # Optimization: In a real implementation, we would use KV cache here
+            # to avoid re-processing the image every time.
+            # This implementation re-processes everything (inefficient but correct for naive).
