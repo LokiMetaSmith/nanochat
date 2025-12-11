@@ -35,6 +35,7 @@ from torch.utils.checkpoint import checkpoint
 def _compute_loss_chunk(x_chunk, targets_chunk, lm_head, softcap, ignore_index, reduction):
     logits_chunk = lm_head(x_chunk)
     logits_chunk = logits_chunk.float()
+    # softcap is a float, not a tensor, so no device issues.
     logits_chunk = softcap * torch.tanh(logits_chunk / softcap)
     return F.cross_entropy(logits_chunk, targets_chunk, ignore_index=ignore_index, reduction=reduction)
 
@@ -58,19 +59,28 @@ def chunked_cross_entropy(x, targets, lm_head, chunk_size=128, softcap=15.0, ign
         target_chunk = targets_flat[i : i + chunk_size]
 
         # We use checkpointing to save memory for the backward pass
-        # Note: We must pass tensors to checkpoint, so softcap is passed as tensor if needed,
-        # but here it's a float. checkpoint handles non-tensor args but they aren't differentiable.
-        # lm_head is a module, so it's captured.
-        loss_chunk = checkpoint(
-            _compute_loss_chunk,
-            x_chunk,
-            target_chunk,
-            lm_head,
-            torch.tensor(softcap, device=x.device),
-            ignore_index,
-            chunk_reduction,
-            use_reentrant=False
-        )
+        # The checkpoint wrapper seems to have issues with torch.compile when loss_reduction is 'none'.
+        # So we only apply it when it's safe and needed (i.e. training with mean/sum reduction).
+        if torch.is_grad_enabled() and reduction != 'none':
+            loss_chunk = checkpoint(
+                _compute_loss_chunk,
+                x_chunk,
+                target_chunk,
+                lm_head,
+                softcap,
+                ignore_index,
+                chunk_reduction,
+                use_reentrant=False
+            )
+        else:
+            loss_chunk = _compute_loss_chunk(
+                x_chunk,
+                target_chunk,
+                lm_head,
+                softcap,
+                ignore_index,
+                chunk_reduction
+            )
 
         if reduction == 'none':
             losses.append(loss_chunk)
