@@ -58,6 +58,7 @@ from nanochat.engine import Engine
 from nanochat.scheduler import get_lr_multiplier, get_muon_momentum
 from scripts.base_eval import evaluate_model
 from nanochat.infovore import Infovore
+from nanochat.robotics import RoboticsConfig
 print_banner()
 
 # -----------------------------------------------------------------------------
@@ -68,6 +69,26 @@ device_type = "" # cuda|cpu|mps (empty => autodetect good device type default, i
 # Model architecture
 depth = 20 # the depth of the Transformer model to train, rest of the kwargs are derived
 max_seq_len = 2048 # max context length
+# Vision Architecture (Multimodal)
+use_vision = False # Enable Vision Encoder
+vision_image_size = 224
+vision_patch_size = 14
+vision_width = 768
+vision_layers = 12
+vision_heads = 12
+vision_mlp_ratio = 4.0
+# Robotics Architecture (Multimodal)
+use_robotics = False # Enable Robotics (Sensor + Latent)
+robotics_sensor_dim = 64
+robotics_surface_dim = 128
+robotics_sensor_tokens = 1
+robotics_surface_tokens = 4
+robotics_action_loss_weight = 1.0 # Loss weight for latent action prediction
+robotics_use_diffusion = False # Enable Diffusion Policy Head
+robotics_diffusion_steps = 100
+# Data Loading
+continual = False # Enable continual learning (poll for new data)
+
 # Training horizon. Only one of these 3 will be used, in this order of precedence.
 num_iterations = -1 # explicit number of steps of the optimization (-1 = disable)
 target_flops = -1.0 # calculate num_iterations to reach target_flops. Useful for scaling laws experiments (-1 = disable)
@@ -168,8 +189,43 @@ print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {
 # -----------------------------------------------------------------------------
 # Initialize the Model
 
+# Calculate total sequence length (Vision + Robotics + Text)
+num_vision_patches = 0
+if use_vision:
+    num_vision_patches = (vision_image_size // vision_patch_size) ** 2
+
+num_robotics_tokens = 0
+if use_robotics:
+    if robotics_sensor_dim > 0:
+        num_robotics_tokens += robotics_sensor_tokens
+    if robotics_surface_dim > 0:
+        num_robotics_tokens += robotics_surface_tokens
+
+total_seq_len = max_seq_len + num_vision_patches + num_robotics_tokens
+print0(f"Max text len: {max_seq_len}, Vision: {num_vision_patches}, Robot: {num_robotics_tokens} -> Total: {total_seq_len}")
+
 # Create a new model with random weights
-model_config_kwargs = dict(sequence_len=max_seq_len, vocab_size=vocab_size, n_layer=num_layers, n_head=num_heads, n_kv_head=num_kv_heads, n_embd=model_dim)
+model_config_kwargs = dict(
+    sequence_len=total_seq_len, # Increase capacity for vision/robot tokens
+    vocab_size=vocab_size,
+    n_layer=num_layers,
+    n_head=num_heads,
+    n_kv_head=num_kv_heads,
+    n_embd=model_dim,
+    use_vision=use_vision,
+    vision_image_size=vision_image_size,
+    vision_patch_size=vision_patch_size,
+    vision_width=vision_width,
+    vision_layers=vision_layers,
+    vision_heads=vision_heads,
+    vision_mlp_ratio=vision_mlp_ratio,
+    use_robotics=use_robotics,
+    robotics_sensor_dim=robotics_sensor_dim,
+    robotics_surface_dim=robotics_surface_dim,
+    robotics_sensor_tokens=robotics_sensor_tokens,
+    robotics_surface_tokens=robotics_surface_tokens,
+    robotics_action_loss_weight=robotics_action_loss_weight
+)
 with torch.device("meta"):
     model_config = GPTConfig(**model_config_kwargs)
     model = GPT(model_config)
@@ -243,9 +299,66 @@ if resuming:
 # Initialize the DataLoaders for train/val
 tokens_dir = os.path.join(base_dir, "tokenized_data")
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
-train_loader = tokenizing_distributed_data_loader_with_state(device_batch_size, max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
+
+# Vision Config for Dataloader
+vision_loader_config = None
+if use_vision:
+    vision_loader_config = {
+        'image_size': vision_image_size,
+        'channels': 3 # assume RGB
+    }
+
+# Robotics Config for Dataloader
+robotics_loader_config = None
+if use_robotics:
+    robotics_loader_config = RoboticsConfig(
+        sensor_dim=robotics_sensor_dim,
+        surface_dim=robotics_surface_dim
+    )
+
+train_loader = tokenizing_distributed_data_loader_with_state(
+    device_batch_size,
+    max_seq_len, # Data loader still requests text of this length
+    split="train",
+    device=device,
+    resume_state_dict=dataloader_resume_state_dict,
+    vision_config=vision_loader_config,
+    robotics_config=robotics_loader_config,
+    continual=continual
+)
+# For val loader we don't support vision yet for bpb evaluation (standard text metric)
+# TODO: Update evaluate_bpb to handle vision if desired, for now we disable vision in val
 build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device)
-x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
+
+# Kick off load of the very first batch
+batch_data = next(train_loader)
+
+# Unpack based on config
+images = None
+sensors = None
+surface = None
+action_targets = None # Only for training
+
+if use_robotics:
+    # Loader returns: inputs, targets, images (opt), sensors, surface, state
+    # But wait, dataloader returns different tuples based on config!
+    # Checking `dataloader.py`:
+    # if robotics_config: yield inputs, targets, final_images, final_sensors, final_surface, state_dict
+    x, y, images, sensors, surface, dataloader_state_dict = batch_data
+
+    # Use surface as action target (predict next state)?
+    # Or shift surface?
+    # Current simplistic approach: predict current surface (reconstruction) or random noise?
+    # In reality we want next step.
+    # The dataloader needs to yield next step.
+    # For now, let's use the current surface as target (autoencoder style)
+    # or implement next-step in dataloader later.
+    action_targets = surface
+
+elif use_vision:
+    x, y, images, dataloader_state_dict = batch_data
+else:
+    x, y, dataloader_state_dict = batch_data
 
 # Initialize Infovore Agent if enabled
 infovore_agent = None
@@ -281,6 +394,8 @@ while True:
         val_loader = build_val_loader()
         eval_steps = eval_tokens // (device_batch_size * max_seq_len * ddp_world_size)
         with autocast_ctx:
+            # Note: evaluate_bpb currently does not support vision, but since our val_loader is text-only, this is fine.
+            # The model handles images=None automatically.
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
         if val_bpb < min_val_bpb:
@@ -299,6 +414,7 @@ while True:
     if core_metric_every > 0 and (last_step or (step > 0 and step % core_metric_every == 0)):
         model.eval()
         with autocast_ctx:
+            # evaluate_model is text-only for now
             results = evaluate_model(orig_model, tokenizer, device, max_per_task=core_metric_max_per_task)
         print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}")
         wandb_run.log({
@@ -326,6 +442,7 @@ while True:
         for prompt in prompts:
             tokens = tokenizer(prompt, prepend="<|bos|>")
             with autocast_ctx:
+                # generate_batch does not currently support images, which is fine for these text prompts
                 sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
             print0(tokenizer.decode(sample[0]))
         model.train()
@@ -365,20 +482,35 @@ while True:
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
-            if use_infovore:
-                loss, infovore_metrics = infovore_agent.compute_nrq_loss(model, x, y)
-                if master_process and step % 10 == 0 and micro_step == 0:
-                     wandb_run.log({
-                         "train/nrq_avg": infovore_metrics["nrq_avg"],
-                         "train/novelty_avg": infovore_metrics["novelty_avg"],
-                         "train/relation_avg": infovore_metrics["relation_avg"]
-                     }, commit=False)
+            # Prepare targets (pad for vision + robotics if needed)
+            # Total padding = vision_patches + robotics_tokens
+            padding_len = num_vision_patches + num_robotics_tokens
+
+            if padding_len > 0:
+                # y shape is (B, max_seq_len)
+                # We need to prepend padding
+                vision_padding = torch.full((y.shape[0], padding_len), -1, dtype=y.dtype, device=y.device)
+                y_padded = torch.cat([vision_padding, y], dim=1)
+
+                loss = model(x, images=images, sensors=sensors, surface=surface, targets=y_padded, action_targets=action_targets)
             else:
-                loss = model(x, y)
+                loss = model(x, images=images, sensors=sensors, surface=surface, targets=y, action_targets=action_targets)
+
         train_loss = loss.detach() # for logging
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         loss.backward()
-        x, y, dataloader_state_dict = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+
+        # Prefetch next batch
+        batch_data = next(train_loader)
+        if use_robotics:
+            x, y, images, sensors, surface, dataloader_state_dict = batch_data
+            action_targets = surface
+        elif use_vision:
+            x, y, images, dataloader_state_dict = batch_data
+        else:
+            x, y, dataloader_state_dict = batch_data
+            images = None
+
     # gradient clipping
     grad_clip_enabled = grad_clip > 0.0
     if grad_clip_enabled:

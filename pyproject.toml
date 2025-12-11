@@ -20,6 +20,8 @@ dependencies = [
     "gguf>=0.10.0",
     "amd-quark>=0.10.0",
     "bitsandbytes>=0.48.0",
+    "pillow>=12.0.0",
+    "numpy>=1.26.4",
 ]
 
 [build-system]
