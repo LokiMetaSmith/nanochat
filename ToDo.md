@@ -1,5 +1,16 @@
 # Remaining Tasks & Roadmap
 
+## 🤖 NanoBot (Robotics & Multimodal)
+- [x] **Vision Integration**: Implement lightweight Vision Transformer and Projector (`nanochat/vision.py`).
+- [x] **Robotics Interface**: Implement Sensor and Surface projectors (`nanochat/robotics.py`).
+- [x] **Action Generation**: Implement **Diffusion Policy Head** (`nanochat/diffusion.py`) for continuous control.
+- [x] **Inference Kernel (Rust)**: Create `nanochat-rs` using HuggingFace Candle for on-robot deployment.
+- [x] **Model Export**: Update `scripts/export_model.py` to embed multimodal config metadata for the Rust kernel.
+- [ ] **Real Data Pipeline**:
+    - Update `nanochat/dataloader.py` to load real images (Parquet bytes/paths) and sensor logs instead of synthetic noise.
+    - Create a data collector script to stream telemetry from ESP32 to Parquet.
+- [ ] **Continual Learning Loop**: Connect the Rust inference kernel to the training loop for online fine-tuning.
+
 ## 🚀 Optimization & Strix Halo Specifics
 - [x] **MXFP4 Investigation**: Research and implement OCP Microscaling (MXFP4) support for inference using AMD Quark, once the ecosystem matures for APUs.
 - [ ] **System Tuner Expansion**: Enhance `scripts/tune_system.py` to auto-tune:
