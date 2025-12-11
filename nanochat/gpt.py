@@ -10,7 +10,7 @@ Notable features:
 - no bias in linear layers
 - Group-Query Attention (GQA) support for more efficient inference
 - Multimodal support (Vision Encoder + Projector)
-- Robotics support (Sensor + Latent Projectors + Action Head)
+- Robotics support (Sensor + Latent Projectors + Diffusion Head)
 """
 
 import math
@@ -121,6 +121,8 @@ class GPTConfig:
     robotics_sensor_tokens: int = 1
     robotics_surface_tokens: int = 4
     robotics_action_loss_weight: float = 1.0 # Weight for action prediction loss
+    robotics_use_diffusion: bool = False # Use Diffusion Head instead of Regression
+    robotics_diffusion_steps: int = 100
 
 
 def norm(x):
@@ -268,7 +270,9 @@ class GPT(nn.Module):
                 surface_dim=config.robotics_surface_dim,
                 sensor_tokens=config.robotics_sensor_tokens,
                 surface_tokens=config.robotics_surface_tokens,
-                projector_dim=config.n_embd
+                projector_dim=config.n_embd,
+                use_diffusion=config.robotics_use_diffusion,
+                diffusion_timesteps=config.robotics_diffusion_steps
             )
             self.robotics_interface = RoboticsInterface(robotics_cfg, config.n_embd)
         else:
@@ -482,18 +486,15 @@ class GPT(nn.Module):
 
         # 3. Handle Robotics Outputs (Action Prediction)
         action_loss = 0.0
+        # Check if we should compute loss (Training Mode)
         if self.config.use_robotics and self.robotics_interface is not None and action_targets is not None:
             # Predict next surface vector from the LAST token's embedding
             # x: (B, T, C) -> last token: (B, C)
             last_hidden_state = x[:, -1, :]
-            action_pred = self.robotics_interface.predict_action(last_hidden_state)
 
-            # Compute MSE Loss
-            # action_targets: (B, surface_dim)
-            if action_pred is not None:
-                action_loss_fn = nn.MSELoss()
-                action_loss = action_loss_fn(action_pred, action_targets)
-                action_loss = action_loss * self.config.robotics_action_loss_weight
+            # This handles both Regression (MSE) and Diffusion (Denoising MSE) losses
+            action_loss = self.robotics_interface.predict_action(last_hidden_state, target_action=action_targets)
+            action_loss = action_loss * self.config.robotics_action_loss_weight
 
         # Forward the lm_head (compute logits)
         softcap = 15.0
@@ -512,7 +513,6 @@ class GPT(nn.Module):
             return total_loss
         else:
             # inference: just return the logits directly
-            # TODO: We might want to return action_pred here too if in robot mode
             logits = self.lm_head(x)
             logits = softcap * torch.tanh(logits / softcap)
             return logits
