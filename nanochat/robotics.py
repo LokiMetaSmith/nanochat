@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
+from nanochat.diffusion import DiffusionConfig, ConditionalDenoiser, NoiseScheduler
 
 @dataclass
 class RoboticsConfig:
@@ -23,6 +24,13 @@ class RoboticsConfig:
     sensor_tokens: int = 1   # Number of tokens to represent sensor state
     surface_tokens: int = 4  # Number of tokens to represent surface state
     projector_dim: int = 768 # Should match LLM n_embd (set dynamically if needed)
+
+    # Diffusion Params
+    use_diffusion: bool = False # Use Diffusion for ActionHead?
+    diffusion_timesteps: int = 100
+    diffusion_beta_start: float = 0.0001
+    diffusion_beta_end: float = 0.02
+    diffusion_hidden_dim: int = 256
 
 class Projector(nn.Module):
     """
@@ -52,13 +60,12 @@ class Projector(nn.Module):
 
 class ActionHead(nn.Module):
     """
-    Predicts the next Latent Surface vector from the LLM's hidden state.
+    Standard Regression Head (Legacy).
+    Predicts the next Latent Surface vector from the LLM's hidden state directly.
     n_embd -> surface_dim
     """
     def __init__(self, input_dim, output_dim):
         super().__init__()
-        # Simple linear head, similar to LM head but for continuous vector
-        # Could make it an MLP for more power
         self.net = nn.Sequential(
             nn.Linear(input_dim, input_dim),
             nn.GELU(),
@@ -66,19 +73,74 @@ class ActionHead(nn.Module):
         )
 
     def forward(self, x):
-        # x: (B, n_embd) -> usually the last token's embedding
         return self.net(x)
+
+class DiffusionHead(nn.Module):
+    """
+    Diffusion Policy Head.
+    Uses LLM hidden state as conditioning to denoise a latent surface vector.
+    """
+    def __init__(self, input_dim, output_dim, config: RoboticsConfig):
+        super().__init__()
+        self.output_dim = output_dim
+        diff_config = DiffusionConfig(
+            timesteps=config.diffusion_timesteps,
+            beta_start=config.diffusion_beta_start,
+            beta_end=config.diffusion_beta_end,
+            hidden_dim=config.diffusion_hidden_dim
+        )
+        self.denoiser = ConditionalDenoiser(
+            action_dim=output_dim,
+            cond_dim=input_dim,
+            config=diff_config
+        )
+        self.scheduler = NoiseScheduler(diff_config)
+
+    def compute_loss(self, hidden_state, target_action):
+        """
+        Computes diffusion training loss.
+        1. Sample random noise and timestep.
+        2. Add noise to target_action.
+        3. Predict noise using denoiser (conditioned on hidden_state).
+        4. MSE Loss.
+        """
+        B = hidden_state.shape[0]
+        device = hidden_state.device
+
+        # Sample random timestep
+        t = torch.randint(0, self.scheduler.timesteps, (B,), device=device).long()
+
+        # Sample noise
+        noise = torch.randn_like(target_action)
+
+        # Add noise (Forward Process)
+        noisy_action, _ = self.scheduler.add_noise(target_action, t, noise)
+
+        # Predict noise (Reverse Process Step)
+        pred_noise = self.denoiser(noisy_action, t, hidden_state)
+
+        # Loss
+        return F.mse_loss(pred_noise, noise)
+
+    @torch.no_grad()
+    def sample(self, hidden_state):
+        """
+        Generate action via denoising loop.
+        """
+        return self.scheduler.sample(self.denoiser, hidden_state, self.output_dim)
+
 
 class RoboticsInterface(nn.Module):
     """
     Combines Sensor and Surface inputs into a sequence of embeddings.
-    Also handles Action prediction.
+    Also handles Action prediction (Regression or Diffusion).
     """
     def __init__(self, config: RoboticsConfig, llm_dim: int):
         super().__init__()
         self.config = config
         self.sensor_dim = config.sensor_dim
         self.surface_dim = config.surface_dim
+        self.use_diffusion = config.use_diffusion
 
         # Sensor Projector (Raw Telemetry -> LLM Space)
         if self.sensor_dim > 0:
@@ -97,14 +159,25 @@ class RoboticsInterface(nn.Module):
                 output_dim=llm_dim,
                 n_tokens=config.surface_tokens
             )
+
             # Action Head (LLM Space -> Latent Neural State)
-            self.action_head = ActionHead(
-                input_dim=llm_dim,
-                output_dim=config.surface_dim
-            )
+            if self.use_diffusion:
+                self.diffusion_head = DiffusionHead(
+                    input_dim=llm_dim,
+                    output_dim=config.surface_dim,
+                    config=config
+                )
+                self.action_head = None # Disable legacy regression head
+            else:
+                self.action_head = ActionHead(
+                    input_dim=llm_dim,
+                    output_dim=config.surface_dim
+                )
+                self.diffusion_head = None
         else:
             self.surface_proj = None
             self.action_head = None
+            self.diffusion_head = None
 
     def forward(self, sensors=None, surface=None):
         """
@@ -135,17 +208,39 @@ class RoboticsInterface(nn.Module):
         # Concatenate along time dimension
         return torch.cat(embeddings_list, dim=1)
 
-    def predict_action(self, hidden_state):
+    def predict_action(self, hidden_state, target_action=None):
         """
-        Predict the next surface vector from the last hidden state.
-        Args:
-            hidden_state: (B, n_embd) - typically the embedding of the last token
-        Returns:
-            action_pred: (B, surface_dim)
+        Predict the next surface vector.
+
+        If `target_action` is provided (Training):
+            - If Diffusion: Computes diffusion loss (MSE on noise).
+            - If Regression: Computes regression loss (MSE on action).
+            Returns: scalar loss (Tensor)
+
+        If `target_action` is None (Inference):
+            - If Diffusion: Runs sampling loop.
+            - If Regression: Runs forward pass.
+            Returns: action_pred (Tensor)
         """
-        if self.action_head is None:
-            return None
-        return self.action_head(hidden_state)
+
+        # Training Mode
+        if target_action is not None:
+            if self.use_diffusion:
+                return self.diffusion_head.compute_loss(hidden_state, target_action)
+            elif self.action_head is not None:
+                pred = self.action_head(hidden_state)
+                return F.mse_loss(pred, target_action)
+            else:
+                return torch.tensor(0.0, device=hidden_state.device, requires_grad=True)
+
+        # Inference Mode
+        else:
+            if self.use_diffusion:
+                return self.diffusion_head.sample(hidden_state)
+            elif self.action_head is not None:
+                return self.action_head(hidden_state)
+            else:
+                return None
 
     def get_num_tokens(self):
         count = 0
