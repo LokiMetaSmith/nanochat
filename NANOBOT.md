@@ -25,6 +25,36 @@ The NanoBot model prepends multimodal tokens to the text context:
     *   **Surface Projector:** Maps latent vectors from external networks to embeddings.
     *   **Diffusion Head:** A Conditional Denoiser (MLP) that generates action vectors by denoising random noise, conditioned on the LLM's hidden state.
 
+## Continual Learning Loop
+
+NanoBot supports **Continual Learning**, allowing the model to train on new data streams in real-time as they are collected from the robot.
+
+### 1. Data Collection
+Use `scripts/collect_telemetry.py` to bridge the robot (via Serial or Mock) to the training pipeline. This script buffers high-frequency telemetry and writes chunks to Parquet files.
+
+```bash
+# Start Data Collector (Mock Mode)
+python scripts/collect_telemetry.py --mock --data_dir data/live_telemetry
+
+# Start Data Collector (Real Robot)
+# python scripts/collect_telemetry.py --port /dev/ttyUSB0 --baud 115200 --data_dir data/live_telemetry
+```
+
+### 2. Online Training
+Run the training script with the `--continual=True` flag. The dataloader will monitor the `data_dir` and ingest new Parquet files as they appear, instead of terminating when the dataset is exhausted.
+
+```bash
+# Point to the live data directory
+export NANOCHAT_BASE_DIR=data/live_telemetry
+
+# Start Online Training
+python -m scripts.base_train \
+    --use_robotics=True \
+    --continual=True \
+    --robotics_use_diffusion=True \
+    --device_batch_size=4
+```
+
 ## Inference Kernel (Rust)
 
 For deployment on robots (where Python overhead is undesirable), NanoBot includes a dedicated **Rust Inference Kernel** (`nanochat-rs`).
@@ -65,8 +95,6 @@ python -m scripts.base_train \
     --robotics_sensor_dim=32 \
     --robotics_surface_dim=64
 ```
-
-*Note: The current dataloader generates synthetic noise for vision and robotics inputs to facilitate architectural testing. For real-world use, you must update `nanochat/dataloader.py` to load your specific dataset (e.g., Parquet files with image bytes and sensor floats).*
 
 ## Exporting Models
 
