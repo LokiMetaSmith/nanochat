@@ -97,6 +97,17 @@ And a bit more about computing environments that will run nanochat:
 
 nanochat can be run on CPU or on MPS (if you're on Macbook), and will automatically try to detect what device is best to run on. You're not going to get too far without GPUs, but at least you'll be able to run the code paths and maybe train a tiny LLM with some patience. For an example of how to make all the run commands much smaller (feel free to tune!), you can refer to [dev/runcpu.sh](dev/runcpu.sh) file. You'll see that I'm essentially restricting all scripts to train smaller models, to run for shorter number of iterations, etc. This functionality is new, slightly gnarly (touched a lot of code), and was merged in this [CPU|MPS PR](https://github.com/karpathy/nanochat/pull/88) on Oct 21, 2025.
 
+## System Tuner & LoRA (New!)
+
+nanochat now includes an expanded `scripts/tune_system.py` that can auto-tune both system performance (compilation modes, batch sizes) and model hyperparameters (learning rates, schedules). It also supports finding optimal configurations for **LoRA (Low-Rank Adaptation)** fine-tuning.
+
+To tune hyperparameters (including LoRA if enabled):
+```bash
+python -m scripts.tune_system --tune-hyperparams --use_lora=True
+```
+
+This will run short benchmarks to find the best `lora_rank` and `lora_alpha` that minimize loss.
+
 ## Experimental: Online Curriculum Learning (Infovore)
 
 nanochat includes an experimental implementation of **Online Curriculum Learning** using the **Novelty-Relation Quotient (NRQ)**. This method dynamically weights the loss of each token based on the model's "taste" for the data. It balances **Novelty** (surprisal/loss) with **Relation** (cosine similarity to the model's current "memory manifold" or concept centroid).
@@ -169,6 +180,7 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── gpt.py                      # The GPT nn.Module Transformer
 │   ├── infovore.py                 # Online Curriculum Learning (NRQ metric)
 │   ├── logo.svg
+│   ├── lora.py                     # Low-Rank Adaptation (LoRA) module
 │   ├── loss_eval.py                # Evaluate bits per byte (instead of loss)
 │   ├── muon.py                     # Distributed Muon optimizer
 │   ├── nl_opt.py                   # Nested Momentum optimizer
@@ -197,7 +209,7 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── serve.py                    # Inference Server & Web UI
 │   ├── tok_eval.py                 # Tokenizer: evaluate compression rate
 │   ├── tok_train.py                # Tokenizer: train it
-│   └── tune_system.py              # System Auto-Tuner (Throughput/LR)
+│   └── tune_system.py              # System Auto-Tuner (Throughput/LR/LoRA)
 ├── speedrun.sh                     # Train the ~$100 nanochat d20
 ├── tasks
 │   ├── arc.py                      # Multiple choice science questions
