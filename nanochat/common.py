@@ -155,8 +155,12 @@ def autodetect_device_type():
     # Check for CUDA/ROCm but also ensure we actually have devices (device_count > 0)
     has_cuda = torch.cuda.is_available()
     has_rocm = hasattr(torch.version, "hip") and torch.version.hip
-    if (has_cuda or has_rocm) and torch.cuda.device_count() > 0:
+    device_count = torch.cuda.device_count()
+    if (has_cuda or has_rocm) and device_count > 0:
         device_type = "cuda"
+    elif (has_cuda or has_rocm) and device_count == 0:
+        print0(f"WARNING: CUDA/ROCm libraries detected (has_cuda={has_cuda}, has_rocm={has_rocm}) but no devices found (device_count=0). Fallback to CPU.")
+        device_type = "cpu"
     elif torch.backends.mps.is_available():
         device_type = "mps"
     else:

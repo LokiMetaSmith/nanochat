@@ -31,8 +31,9 @@ def test_gpt_init(gpt_config_small):
 def test_gpt_forward_inference(gpt_config_small):
     model = GPT(gpt_config_small)
     idx = torch.randint(0, 100, (2, 8)) # B=2, T=8
-    logits = model(idx)
+    logits, action_pred = model(idx)
     assert logits.shape == (2, 8, 100)
+    assert action_pred is None
 
 def test_gpt_forward_training(gpt_config_small):
     model = GPT(gpt_config_small)
@@ -57,7 +58,8 @@ def test_gpt_generate(gpt_config_small):
     gen = model.generate(start_tokens, max_tokens=5, temperature=0.0)
     generated = list(gen)
     assert len(generated) == 5
-    assert all(isinstance(x, int) for x in generated)
+    # generate yields (token, action_pred)
+    assert all(isinstance(x[0], int) for x in generated)
 
 def test_gpt_kv_cache_inference(gpt_config_small):
     # This requires mocking KVCache or using engine.KVCache if available
@@ -78,13 +80,13 @@ def test_gpt_kv_cache_inference(gpt_config_small):
 
     # First token
     idx = torch.randint(0, 100, (batch_size, 1))
-    logits = model(idx, kv_cache=kv_cache)
+    logits, action_pred = model(idx, kv_cache=kv_cache)
     assert logits.shape == (batch_size, 1, 100)
     assert kv_cache.get_pos() == 1
 
     # Second token
     idx = torch.randint(0, 100, (batch_size, 1))
-    logits = model(idx, kv_cache=kv_cache)
+    logits, action_pred = model(idx, kv_cache=kv_cache)
     assert logits.shape == (batch_size, 1, 100)
     assert kv_cache.get_pos() == 2
 

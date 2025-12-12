@@ -151,6 +151,12 @@ user_config = {k: globals()[k] for k in config_keys} # will be useful for loggin
 # Compute init
 device_type = autodetect_device_type() if device_type == "" else device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+
+# Fallback for CPU compilation mode
+if device.type == 'cpu' and compile_mode == 'reduce-overhead':
+    print0("WARNING: 'reduce-overhead' compile mode is not compatible with CPU. Switching to 'default'.")
+    compile_mode = 'default'
+
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
 autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None

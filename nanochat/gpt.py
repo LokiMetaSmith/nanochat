@@ -91,7 +91,7 @@ def chunked_cross_entropy(x, targets, lm_head, chunk_size=128, softcap=15.0, ign
             losses.append(loss_chunk.unsqueeze(0)) # keep as tensor list
             # Count valid tokens for mean reduction
             valid_mask = target_chunk != ignore_index
-            total_tokens += valid_mask.sum().item()
+            total_tokens += valid_mask.sum()
 
     if not losses:
         return torch.tensor(0.0, device=x.device, requires_grad=True)
@@ -103,10 +103,9 @@ def chunked_cross_entropy(x, targets, lm_head, chunk_size=128, softcap=15.0, ign
     elif reduction == 'sum':
         return all_losses.sum()
     elif reduction == 'mean':
-        if total_tokens > 0:
-            return all_losses.sum() / total_tokens
-        else:
-             return all_losses.sum() * 0.0 # preserve grad
+        # total_tokens is a tensor now. Avoid .item() causing graph breaks.
+        # We clamp to 1 to avoid division by zero (loss will be 0 anyway if total_tokens is 0)
+        return all_losses.sum() / total_tokens.clamp(min=1)
     else:
         raise ValueError(f"Unknown reduction: {reduction}")
 
