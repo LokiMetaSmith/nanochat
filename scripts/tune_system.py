@@ -243,18 +243,6 @@ def main():
         args.tune_lr = True
         args.tune_optimizer = True
 
-    # Check for Strix Halo (gfx1151) early to set env vars before imports if needed
-    is_strix_halo_pre = False
-    if os.environ.get("HSA_OVERRIDE_GFX_VERSION") == "11.5.1":
-        is_strix_halo_pre = True
-    elif shutil.which('rocminfo'):
-        try:
-             result = subprocess.run(['rocminfo'], capture_output=True, text=True)
-             if 'gfx1151' in result.stdout:
-                 is_strix_halo_pre = True
-        except:
-             pass
-
     # Load Base Configuration for reference (but don't rely on it for cmd construction unless needed)
     base_config = {}
     if args.config:
