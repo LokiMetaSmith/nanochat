@@ -11,13 +11,14 @@ Notable features:
 - Group-Query Attention (GQA) support for more efficient inference
 - Multimodal support (Vision Encoder + Projector)
 - Robotics support (Sensor + Latent Projectors + Diffusion Head)
+- LoRA support (Low-Rank Adaptation)
 """
 
 import math
 from functools import partial
 from dataclasses import dataclass, field
 from contextlib import nullcontext
-from typing import Optional
+from typing import Optional, List
 
 import torch
 import torch.nn as nn
@@ -30,6 +31,7 @@ from nanochat.adamw import DistAdamW
 from nanochat.nl_opt import NestedMomentum, DistNestedMomentum
 from nanochat.vision import VisionConfig, VisionTransformer, VisionProjector
 from nanochat.robotics import RoboticsConfig, RoboticsInterface
+from nanochat.lora import LoRALinear
 from torch.utils.checkpoint import checkpoint
 
 def _compute_loss_chunk(x_chunk, targets_chunk, lm_head, softcap, ignore_index, reduction):
@@ -133,6 +135,21 @@ class GPTConfig:
     robotics_action_loss_weight: float = 1.0 # Weight for action prediction loss
     robotics_use_diffusion: bool = False # Use Diffusion Head instead of Regression
     robotics_diffusion_steps: int = 100
+    # LoRA params
+    use_lora: bool = False
+    lora_rank: int = 8
+    lora_alpha: int = 16
+    lora_dropout: float = 0.05
+    # Target modules: list of strings. Valid: 'q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj' (for MLP)
+    # Our internal names are slightly different: 'c_q', 'c_k', 'c_v', 'c_proj' (attn), 'c_fc', 'c_proj' (mlp)
+    # We will map standard names to internal ones for easier config:
+    # q_proj -> c_q
+    # k_proj -> c_k
+    # v_proj -> c_v
+    # o_proj -> c_proj (attn)
+    # up_proj -> c_fc (partially, c_fc is 4x expansion)
+    # down_proj -> c_proj (mlp)
+    lora_targets: List[str] = field(default_factory=lambda: ["q_proj", "v_proj"])
 
 
 def norm(x):
@@ -160,10 +177,23 @@ class CausalSelfAttention(nn.Module):
         self.head_dim = self.n_embd // self.n_head
         assert self.n_embd % self.n_head == 0
         assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
+
         self.c_q = nn.Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
         self.c_k = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
+
+        # Apply LoRA if configured
+        if config.use_lora:
+            targets = config.lora_targets or []
+            if "q_proj" in targets:
+                self.c_q = LoRALinear(self.c_q, config.lora_rank, config.lora_alpha, config.lora_dropout)
+            if "k_proj" in targets:
+                self.c_k = LoRALinear(self.c_k, config.lora_rank, config.lora_alpha, config.lora_dropout)
+            if "v_proj" in targets:
+                self.c_v = LoRALinear(self.c_v, config.lora_rank, config.lora_alpha, config.lora_dropout)
+            if "o_proj" in targets:
+                self.c_proj = LoRALinear(self.c_proj, config.lora_rank, config.lora_alpha, config.lora_dropout)
 
     def forward(self, x, cos_sin, kv_cache):
         B, T, C = x.size()
@@ -223,6 +253,15 @@ class MLP(nn.Module):
         super().__init__()
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+
+        # Apply LoRA if configured
+        if config.use_lora:
+            targets = config.lora_targets or []
+            # c_fc acts as the "up projection" (and gate if using SwiGLU, but here it's simple MLP)
+            if "gate_proj" in targets or "up_proj" in targets:
+                self.c_fc = LoRALinear(self.c_fc, config.lora_rank, config.lora_alpha, config.lora_dropout)
+            if "down_proj" in targets:
+                self.c_proj = LoRALinear(self.c_proj, config.lora_rank, config.lora_alpha, config.lora_dropout)
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -304,8 +343,23 @@ class GPT(nn.Module):
         torch.nn.init.zeros_(self.lm_head.weight)
         # zero out c_proj weights in all blocks
         for block in self.transformer.h:
-            torch.nn.init.zeros_(block.mlp.c_proj.weight)
-            torch.nn.init.zeros_(block.attn.c_proj.weight)
+            # We need to handle the case where c_proj is wrapped in LoRALinear
+            # However, LoRALinear resets its own parameters in __init__, and its base layer is already initialized
+            # But the base layer weights might need to be zeroed if they were just created.
+            # In Block.__init__, we create Linear then wrap.
+            # self.apply traverses recursively.
+
+            # If wrapped:
+            if isinstance(block.mlp.c_proj, LoRALinear):
+                 torch.nn.init.zeros_(block.mlp.c_proj.base_layer.weight)
+            else:
+                 torch.nn.init.zeros_(block.mlp.c_proj.weight)
+
+            if isinstance(block.attn.c_proj, LoRALinear):
+                 torch.nn.init.zeros_(block.attn.c_proj.base_layer.weight)
+            else:
+                 torch.nn.init.zeros_(block.attn.c_proj.weight)
+
         self.init_buffers()
 
     def init_buffers(self):
@@ -318,7 +372,11 @@ class GPT(nn.Module):
             self.transformer.wte.to(dtype=torch.bfloat16)
 
     def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
+        if isinstance(module, LoRALinear):
+            # LoRA linear has its own reset_parameters, and base_layer is initialized separately
+            # We don't need to do anything special here as long as the base layer is initialized
+            pass
+        elif isinstance(module, nn.Linear):
             # https://arxiv.org/pdf/2310.17813
             fan_out = module.weight.size(0)
             fan_in = module.weight.size(1)
@@ -366,7 +424,54 @@ class GPT(nn.Module):
         ddp, rank, local_rank, world_size = get_dist_info()
         use_dist_optim = ddp and world_size > 1
 
-        # Separate out all parameters into 3 groups (matrix, embedding, lm_head)
+        # Separate out all parameters into groups
+        # If LoRA is enabled, we ONLY train LoRA parameters (and maybe norm/head if desired, but usually just LoRA)
+        # For this implementation, we will strictly follow LoRA paper: Only train A and B.
+
+        if self.config.use_lora:
+            if rank == 0:
+                print("LoRA Enabled: Freezing base model parameters.")
+
+            # 1. Freeze everything first
+            for param in self.parameters():
+                param.requires_grad = False
+
+            # 2. Unfreeze LoRA parameters
+            lora_params = []
+            for name, module in self.named_modules():
+                if isinstance(module, LoRALinear):
+                    module.lora_A.requires_grad = True
+                    module.lora_B.requires_grad = True
+                    lora_params.append(module.lora_A)
+                    lora_params.append(module.lora_B)
+
+            # 3. Create a single optimizer group for LoRA params
+            # We use the 'general_optimizer' logic (AdamW) for LoRA usually. Muon is designed for massive matrices.
+            # LoRA matrices are small (rank r), so AdamW is appropriate.
+
+            if rank == 0:
+                print(f"LoRA: Trainable parameters: {sum(p.numel() for p in lora_params)}")
+
+            general_groups = [
+                dict(params=lora_params, lr=matrix_lr) # Use matrix_lr or embedding_lr? Usually LoRA LR is higher, like 1e-4 to 1e-3.
+                                                        # We will use matrix_lr as a proxy for the 'main' learning rate.
+            ]
+
+            # We default to AdamW for LoRA
+            # Muon might not be suitable for small rank matrices?
+            # Let's stick to AdamW for reliability with LoRA.
+
+            adamw_kwargs = dict(betas=(0.9, 0.99), eps=1e-8, weight_decay=weight_decay)
+
+            if use_dist_optim:
+                 optimizer = ZeroRedundancyOptimizer(general_groups, optimizer_class=torch.optim.AdamW, fused=True, **adamw_kwargs)
+            else:
+                 optimizer = torch.optim.AdamW(general_groups, fused=True, **adamw_kwargs)
+
+            return [optimizer] # Return single optimizer
+
+        # --- Standard Full Finetuning / Pretraining Setup (Existing Logic) ---
+
         matrix_params = list(self.transformer.h.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
