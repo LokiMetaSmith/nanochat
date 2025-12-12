@@ -21,12 +21,18 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 # create a .venv local virtual environment (if it doesn't exist)
 [ -d ".venv" ] || uv venv
 
+# activate venv so that `python` uses the project's venv instead of system python
+source .venv/bin/activate
+
+# Force sync of amd dependencies to ensure rocminfo is available
+uv sync --extra amd > /dev/null 2>&1 || uv sync --extra amd
+
 # install the repo dependencies
 # Detect hardware to install the correct torch version
 if command -v nvidia-smi &> /dev/null; then
     echo "NVIDIA GPU detected. Installing CUDA dependencies..."
     EXTRAS="gpu"
-elif [ -e /dev/kfd ]; then
+elif command -v rocminfo &> /dev/null; then
     echo "AMD GPU detected. Installing ROCm dependencies..."
     EXTRAS="amd"
 else
@@ -35,11 +41,18 @@ else
 fi
 uv sync --extra $EXTRAS
 
-# activate venv so that `python` uses the project's venv instead of system python
-source .venv/bin/activate
-
 # Explicitly uninstall triton if present, as it conflicts with pytorch-triton-rocm
 if [ "$EXTRAS" == "amd" ]; then
+    # Get ROCm path from the installed package
+    ROCM_PATH_SCRIPT="import sysconfig, os; p = f\"{sysconfig.get_paths()['purelib']}/_rocm_sdk_core\"; print(p) if os.path.exists(p) else print('')"
+    ROCM_PATH=$(python -c "$ROCM_PATH_SCRIPT")
+
+    if [ -n "$ROCM_PATH" ]; then
+        export ROCM_PATH
+        export LD_LIBRARY_PATH="$ROCM_PATH/lib:$LD_LIBRARY_PATH"
+        export PATH="$ROCM_PATH/bin:$PATH"
+    fi
+
     uv pip uninstall -q triton || true
     uv pip install --force-reinstall --index-url https://repo.amd.com/rocm/whl/gfx1151 pytorch-triton-rocm
 
