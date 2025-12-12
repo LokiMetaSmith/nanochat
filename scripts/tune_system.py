@@ -233,7 +233,14 @@ def main():
     parser.add_argument("--config", type=str, default=None, help="Path to base JSON configuration file")
     parser.add_argument("--tune-lr", action="store_true", help="Enable Learning Rate tuning (slow)")
     parser.add_argument("--tune-optimizer", action="store_true", help="Enable Optimizer tuning (slow)")
+    # New flag: tune-hyperparams (alias for enabling comprehensive hyperparam tuning including LoRA)
+    parser.add_argument("--tune-hyperparams", action="store_true", help="Enable comprehensive hyperparameter tuning (LR, Sched, LoRA)")
     args, unknown = parser.parse_known_args()
+
+    # Consolidate flags
+    if args.tune_hyperparams:
+        args.tune_lr = True
+        args.tune_optimizer = True
 
     # Load Base Configuration for reference (but don't rely on it for cmd construction unless needed)
     base_config = {}
@@ -373,7 +380,7 @@ def main():
     print("="*40, flush=True)
 
     # -------------------------------------------------------------------------
-    # Phase 2: Hyperparameter Tuning (LRs, Optimizer)
+    # Phase 2: Hyperparameter Tuning (LRs, Optimizer, LoRA)
     # We use the best throughput config as the base
     # -------------------------------------------------------------------------
 
@@ -503,9 +510,6 @@ def main():
         best_loss = float("inf")
         best_opt_config = {}
 
-        # We perform a baseline check with current best config first if needed,
-        # but we can just compare within this set.
-
         for wd in wds:
             overrides = final_config.copy()
             overrides["weight_decay"] = wd
@@ -526,6 +530,51 @@ def main():
         if best_opt_config:
              print(f"Found better Optimizer params: {best_opt_config} with loss {best_loss:.4f}")
              final_config.update(best_opt_config)
+
+    # -------------------------------------------------------------------------
+    # Phase 4: LoRA Tuning (if use_lora=True)
+    # -------------------------------------------------------------------------
+    # Check if LoRA is enabled in config or overrides
+    use_lora = final_config.get("use_lora", False)
+    # Check if CLI args enable it (as string/bool)
+    if isinstance(use_lora, str):
+        use_lora = use_lora.lower() == "true"
+
+    if args.tune_hyperparams and use_lora:
+        print("\nPhase 4: LoRA Hyperparameter Tuning", flush=True)
+        # Tune Rank and Alpha
+        # Rank: Try [8, 16, 32]
+        # Alpha: Try [1x, 2x] of Rank
+
+        ranks = [8, 16, 32]
+        alpha_ratios = [1, 2] # alpha = rank * ratio
+
+        best_lora_loss = float("inf")
+        best_lora_config = {}
+
+        for r in ranks:
+            for ratio in alpha_ratios:
+                alpha = r * ratio
+                overrides = final_config.copy()
+                overrides["lora_rank"] = r
+                overrides["lora_alpha"] = alpha
+
+                loss = run_loss_benchmark(
+                    overrides,
+                    best_env,
+                    base_config_path=args.config,
+                    base_config=base_config,
+                    extra_args=unknown,
+                    steps=50
+                )
+
+                if loss < best_lora_loss:
+                    best_lora_loss = loss
+                    best_lora_config = {"lora_rank": r, "lora_alpha": alpha}
+
+        if best_lora_config:
+             print(f"Found better LoRA params: {best_lora_config} with loss {best_lora_loss:.4f}")
+             final_config.update(best_lora_config)
 
     # -------------------------------------------------------------------------
     # Final Output
