@@ -8,6 +8,7 @@ import json
 import argparse
 import itertools
 from typing import Dict, Any, List, Tuple
+import torch
 
 def run_benchmark(config_overrides: Dict[str, Any], env_vars: Dict[str, str], base_config_path: str = None, base_config: Dict[str, Any] = None, extra_args: List[str] = [], steps: int = 5, minimal_validation: bool = True) -> float:
     """
@@ -242,6 +243,18 @@ def main():
         args.tune_lr = True
         args.tune_optimizer = True
 
+    # Check for Strix Halo (gfx1151) early to set env vars before imports if needed
+    is_strix_halo_pre = False
+    if os.environ.get("HSA_OVERRIDE_GFX_VERSION") == "11.5.1":
+        is_strix_halo_pre = True
+    elif shutil.which('rocminfo'):
+        try:
+             result = subprocess.run(['rocminfo'], capture_output=True, text=True)
+             if 'gfx1151' in result.stdout:
+                 is_strix_halo_pre = True
+        except:
+             pass
+
     # Load Base Configuration for reference (but don't rely on it for cmd construction unless needed)
     base_config = {}
     if args.config:
@@ -304,6 +317,15 @@ def main():
     # Compilation flags
     compile_options = [True, False] if is_rocm else [True]
     compile_dynamic_options = [False] # Default to static shapes
+
+    # Handle CPU Fallback logic for compilation
+    # If we are on CPU (no ROCm/CUDA), we must ensure we don't try incompatible modes like reduce-overhead
+    # But this script calls base_train.py which now handles the downgrade warning.
+    # However, we should be careful about what we search over.
+    if not is_rocm and not torch.cuda.is_available(): # CPU
+         # On CPU, compiling might be slow or unstable with certain options.
+         # We default to [True] but we should ensure compile_mode isn't forced to something bad later.
+         pass
 
     if is_strix_halo:
         print("NOTE: Strix Halo detected. Enabling dynamic=True/False investigation.", flush=True)
