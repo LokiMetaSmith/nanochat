@@ -20,11 +20,15 @@ mkdir -p $NANOCHAT_BASE_DIR
 # install uv
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
+source .venv/bin/activate
+
+# Force sync of amd dependencies to ensure rocminfo is available
+uv sync --extra amd > /dev/null 2>&1 || uv sync --extra amd
 
 # Detect hardware
 if command -v nvidia-smi &> /dev/null; then
     EXTRAS="gpu"
-elif [ -e /dev/kfd ]; then
+elif command -v rocminfo &> /dev/null; then
     EXTRAS="amd"
 else
     EXTRAS="cpu"
@@ -33,14 +37,22 @@ fi
 # Sync dependencies
 # Using silent sync if possible, but fallback to normal if it fails or first run
 uv sync --extra $EXTRAS > /dev/null 2>&1 || uv sync --extra $EXTRAS
-
-source .venv/bin/activate
 if [ -f "$HOME/.cargo/env" ]; then
     source "$HOME/.cargo/env"
 fi
 
 # AMD Specifics
 if [ "$EXTRAS" == "amd" ]; then
+    # Get ROCm path from the installed package
+    ROCM_PATH_SCRIPT="import sysconfig, os; p = f\"{sysconfig.get_paths()['purelib']}/_rocm_sdk_core\"; print(p) if os.path.exists(p) else print('')"
+    ROCM_PATH=$(python -c "$ROCM_PATH_SCRIPT")
+
+    if [ -n "$ROCM_PATH" ]; then
+        export ROCM_PATH
+        export LD_LIBRARY_PATH="$ROCM_PATH/lib:$LD_LIBRARY_PATH"
+        export PATH="$ROCM_PATH/bin:$PATH"
+    fi
+
     # Fix Triton conflicts if triton is present
     if uv pip show triton > /dev/null 2>&1; then
         uv pip uninstall -q triton
