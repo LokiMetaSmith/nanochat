@@ -219,8 +219,10 @@ class CausalSelfAttention(nn.Module):
 
         # Context manager for Flash Attention
         # On AMD Strix Halo/RDNA 3.5, we want to ensure we hit the CK Flash Attention kernel
-        # We explicitly disable math to avoid fallback to slow implementation
-        sdp_ctx = torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=True) if x.device.type == "cuda" else nullcontext()
+        # However, if CK/Flash kernels are unavailable (e.g. missing support in build), we must fallback to Math.
+        # Previously we explicitly disabled math, which caused crashes on unsupported hardware.
+        # We now enable math fallback.
+        sdp_ctx = torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=True) if x.device.type == "cuda" else nullcontext()
 
         with sdp_ctx:
             if kv_cache is None or Tq == Tk:
