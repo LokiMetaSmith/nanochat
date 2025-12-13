@@ -63,12 +63,12 @@ if [ "$EXTRAS" == "amd" ]; then
     # Fix Triton conflicts if triton is present
     if uv pip show triton > /dev/null 2>&1; then
         uv pip uninstall -q triton
-        # Reinstall pytorch-triton-rocm to ensure it's intact after triton removal
-        uv pip install --force-reinstall --index-url https://repo.amd.com/rocm/whl/gfx1151 pytorch-triton-rocm > /dev/null 2>&1
+        # Restore environment to ensure pytorch-triton-rocm is intact and correct version
+        uv sync --extra amd > /dev/null 2>&1
     fi
     # Ensure pytorch-triton-rocm is installed
     if ! uv pip show pytorch-triton-rocm > /dev/null 2>&1; then
-        uv pip install --index-url https://repo.amd.com/rocm/whl/gfx1151 pytorch-triton-rocm > /dev/null 2>&1
+        uv sync --extra amd > /dev/null 2>&1
     fi
 
     # LLD Path
