@@ -23,6 +23,8 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 source .venv/bin/activate
 
 # Force sync of amd dependencies to ensure rocminfo is available
+# Note: we must export the PATH to include the venv bin for rocminfo to be potentially found if it was installed there
+export PATH="$(pwd)/.venv/bin:$PATH"
 uv sync --extra amd > /dev/null 2>&1 || uv sync --extra amd
 
 # Detect hardware
@@ -31,7 +33,12 @@ if command -v nvidia-smi &> /dev/null; then
 elif command -v rocminfo &> /dev/null; then
     EXTRAS="amd"
 else
-    EXTRAS="cpu"
+    # Double check if rocminfo is present in venv but not in PATH yet (though we added it)
+    if [ -f ".venv/bin/rocminfo" ]; then
+         EXTRAS="amd"
+    else
+         EXTRAS="cpu"
+    fi
 fi
 
 # Sync dependencies
