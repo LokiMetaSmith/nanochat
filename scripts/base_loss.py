@@ -22,6 +22,7 @@ split_tokens = 20*524288  # number of tokens to evaluate per split
 model_tag = None # optional model tag for the output directory name
 model_step = None # optional model step for the output directory name
 device_type = "" # cuda|cpu|mps (empty => autodetect)
+depth = 0 # optional model depth to infer model tag
 
 # Overrides from command line or config file
 config_keys = {k: v for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str, type(None)))}
@@ -32,6 +33,8 @@ globals().update(config_updates)
 # Load the base model and the tokenizer
 device_type = autodetect_device_type() if device_type == "" else device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+if model_tag is None and depth > 0:
+    model_tag = f"d{depth}"
 model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=model_tag, step=model_step)
 sequence_len = meta["model_config"]["sequence_len"] # could be arbitrary really
 autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
