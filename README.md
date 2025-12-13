@@ -24,13 +24,7 @@ Alternatively, since the script runs for 4 hours, I like to launch it like this 
 screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
 ```
 
-See the [screen cheatsheet](https://gist.github.com/jctosta/af918e1618682638aa82) if you are less familiar. You can watch it go inside the screen session, or detach with `Ctrl-a d` and `tail speedrun.log` to view progress. Now wait 4 hours. Once it's done, you can talk to your LLM via the ChatGPT-like web UI. Make sure again that your local uv virtual environment is active (run `source .venv/bin/activate`), and serve it:
-
-```bash
-python -m scripts.serve
-```
-
-And then visit the URL shown. Make sure to access it correctly, e.g. on Lambda use the public IP of the node you're on, followed by the port, so for example [http://209.20.xxx.xxx:8000/](http://209.20.xxx.xxx:8000/), etc. Then talk to your LLM as you'd normally talk to ChatGPT! Get it to write stories or poems. Ask it to tell you who you are to see a hallucination. Ask it why the sky is blue. Or why it's green. The speedrun is a 4e19 FLOPs capability model so it's a bit like talking to a kindergartener :).
+See the [screen cheatsheet](https://gist.github.com/jctosta/af918e1618682638aa82) if you are less familiar. You can watch it go inside the screen session, or detach with `Ctrl-a d` and `tail speedrun.log` to view progress. Now wait 4 hours. Once it's done, you can talk to your LLM via the ChatGPT-like web UI. Make sure to access it correctly, e.g. on Lambda use the public IP of the node you're on, followed by the port, so for example [http://209.20.xxx.xxx:8000/](http://209.20.xxx.xxx:8000/), etc. Then talk to your LLM as you'd normally talk to ChatGPT! Get it to write stories or poems. Ask it to tell you who you are to see a hallucination. Ask it why the sky is blue. Or why it's green. The speedrun is a 4e19 FLOPs capability model so it's a bit like talking to a kindergartener :).
 
 ---
 
@@ -121,6 +115,18 @@ python -m scripts.base_train --use_infovore=True --infovore_beta=0.99
 
 When enabled, the training loop will log three additional metrics to WandB: `train/nrq_avg`, `train/novelty_avg`, and `train/relation_avg`.
 
+## Robotics & Embodied AI (NanoBot)
+
+nanochat has evolved into **NanoBot**! The system now supports multimodal inputs (Vision, Telemetry) and can generate actions via Diffusion Policies.
+
+Key features:
+- **Vision:** ViT integration for processing images.
+- **Proprioception:** Ingests raw sensor data (joints, accel).
+- **Diffusion Policy:** Generates complex action distributions using a Diffusion Head.
+- **Rust Inference:** A dedicated, lightweight inference kernel (`nanochat-rs`) for deployment on edge hardware (e.g., Strix Halo, embedded Linux).
+
+For full details on architecture, training, and deployment, see [NANOBOT.md](NANOBOT.md).
+
 ## Customization
 
 To customize your nanochat, see [Guide: infusing identity to your nanochat](https://github.com/karpathy/nanochat/discussions/139) in Discussions, which describes how you can tune your nanochat's personality through synthetic data generation and mixing that data into midtraining and SFT stages.
@@ -153,6 +159,7 @@ python -m pytest tests/test_rustbpe.py -v -s
 .
 ├── LICENSE
 ├── README.md
+├── NANOBOT.md                  # NanoBot architecture & usage
 ├── configs
 │   ├── medium.json                 # Depth 10 model configuration
 │   ├── speedrun.json               # Depth 20 model configuration
@@ -175,6 +182,7 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── core_eval.py                # Evaluates base model CORE score (DCLM paper)
 │   ├── dataloader.py               # Tokenizing Distributed Data Loader
 │   ├── dataset.py                  # Download/read utils for pretraining data
+│   ├── diffusion.py                # Diffusion Policy module (DDPM)
 │   ├── engine.py                   # Efficient model inference with KV Cache
 │   ├── execution.py                # Allows the LLM to execute Python code as tool
 │   ├── gpt.py                      # The GPT nn.Module Transformer
@@ -185,8 +193,17 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── muon.py                     # Distributed Muon optimizer
 │   ├── nl_opt.py                   # Nested Momentum optimizer
 │   ├── report.py                   # Utilities for writing the nanochat Report
+│   ├── robotics.py                 # Robotics interface & Diffusion Head
 │   ├── tokenizer.py                # BPE Tokenizer wrapper in style of GPT-4
-│   └── ui.html                     # HTML/CSS/JS for nanochat frontend
+│   ├── ui.html                     # HTML/CSS/JS for nanochat frontend
+│   └── vision.py                   # Vision Transformer module
+├── nanochat-rs                     # Rust Inference Kernel
+│   ├── Cargo.toml
+│   └── src
+│       ├── config.rs
+│       ├── diffusion.rs
+│       ├── main.rs
+│       └── model.rs
 ├── pyproject.toml
 ├── run1000.sh                      # Train the ~$800 nanochat d32
 ├── rustbpe                         # Custom Rust BPE tokenizer trainer
@@ -203,6 +220,7 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── chat_eval.py                # Chat model (SFT/Mid): eval tasks
 │   ├── chat_rl.py                  # Chat model (SFT/Mid): reinforcement learning
 │   ├── chat_sft.py                 # Chat model: train SFT
+│   ├── collect_telemetry.py        # Data collector for robotics telemetry
 │   ├── export_model.py             # Export models to Safetensors/GGUF
 │   ├── mid_train.py                # Chat model: midtraining
 │   ├── quantize_mxfp4.py           # Post-Training Quantization (MXFP4)
@@ -221,8 +239,10 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── smoltalk.py                 # Conglomerate dataset of SmolTalk from HF
 │   └── spellingbee.py              # Task teaching model to spell/count letters
 ├── tests
-│   └── test_engine.py
-│   └── test_rustbpe.py
+│   ├── test_engine.py
+│   ├── test_robotics.py
+│   ├── test_rustbpe.py
+│   └── test_train_integration.py
 └── uv.lock
 ```
 
