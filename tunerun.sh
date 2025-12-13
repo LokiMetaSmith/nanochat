@@ -66,7 +66,8 @@ source .venv/bin/activate
 # Explicitly uninstall triton if present
 if [ "$EXTRAS" == "amd" ]; then
     uv pip uninstall -q triton || true
-    uv pip install --force-reinstall --index-url https://repo.amd.com/rocm/whl/gfx1151 pytorch-triton-rocm
+    # Ensure dependencies are in sync (restore pytorch-triton-rocm if needed, at correct version)
+    uv sync --extra amd > /dev/null 2>&1
 
     ROCM_LLD_PATH=$(python -c "import sysconfig; import os; p = f\"{sysconfig.get_paths()['purelib']}/_rocm_sdk_core/lib/llvm/bin/ld.lld\"; print(p) if os.path.exists(p) else print('')")
     if [ -n "$ROCM_LLD_PATH" ]; then
