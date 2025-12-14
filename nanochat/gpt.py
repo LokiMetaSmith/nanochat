@@ -23,6 +23,7 @@ from typing import Optional, List
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.attention import sdpa_kernel, SDPBackend
 from torch.distributed.optim import ZeroRedundancyOptimizer
 
 from nanochat.common import get_dist_info, print0
@@ -222,7 +223,10 @@ class CausalSelfAttention(nn.Module):
         # However, if CK/Flash kernels are unavailable (e.g. missing support in build), we must fallback to Math.
         # Previously we explicitly disabled math, which caused crashes on unsupported hardware.
         # We now enable math fallback.
-        sdp_ctx = torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=True) if x.device.type == "cuda" else nullcontext()
+        if x.device.type == "cuda":
+            sdp_ctx = sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH])
+        else:
+            sdp_ctx = nullcontext()
 
         with sdp_ctx:
             if kv_cache is None or Tq == Tk:
