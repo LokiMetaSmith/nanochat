@@ -492,6 +492,11 @@ while True:
             # Total padding = vision_patches + robotics_tokens
             padding_len = num_vision_patches + num_robotics_tokens
 
+            # Mark the beginning of a step for CUDAGraphs (required for reduce-overhead mode)
+            # This must be called before the model forward pass
+            if hasattr(torch.compiler, "cudagraph_mark_step_begin"):
+                torch.compiler.cudagraph_mark_step_begin()
+
             if padding_len > 0:
                 # y shape is (B, max_seq_len)
                 # We need to prepend padding

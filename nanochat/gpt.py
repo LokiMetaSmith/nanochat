@@ -558,13 +558,6 @@ class GPT(nn.Module):
         return optimizers
 
     def forward(self, idx, images=None, sensors=None, surface=None, targets=None, action_targets=None, kv_cache=None, loss_reduction='mean', return_embeddings=False):
-        # We need to signal the start of a step for CUDAGraphs to avoid reusing input tensors unsafely
-        # This is especially important for 'reduce-overhead' compilation mode
-        try:
-            torch.compiler.cudagraph_mark_step_begin()
-        except AttributeError:
-            pass # torch.compiler might not be available or this method might not exist in older versions
-
         B, T = idx.size()
 
         # Get Text Embeddings
