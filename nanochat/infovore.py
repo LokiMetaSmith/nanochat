@@ -40,7 +40,7 @@ class Infovore:
             self.manifold_centroid = (self.beta * self.manifold_centroid) + \
                                      ((1 - self.beta) * batch_centroid)
 
-    def compute_nrq_loss(self, model, idx, targets):
+    def compute_nrq_loss(self, model, idx, targets, **kwargs):
         """
         Computes the NRQ-weighted loss.
 
@@ -57,7 +57,10 @@ class Infovore:
         # Note: We assume model is wrapped in DDP or compiled, so we call it directly.
         # But wait, if model is compiled or DDP, the signature must support return_embeddings.
         # We modified GPT.forward, but if it's DDP wrapped, forward args pass through.
-        raw_loss, hidden_states = model(idx, targets, loss_reduction='none', return_embeddings=True)
+
+        # We pass targets as a keyword argument to ensure compatibility with GPT.forward
+        # and forward any additional arguments (images, sensors, etc.) via kwargs.
+        raw_loss, hidden_states = model(idx, targets=targets, loss_reduction='none', return_embeddings=True, **kwargs)
 
         # raw_loss is (B*T,) flattened or (B, T) depending on implementation.
         # GPT.forward returns F.cross_entropy with reduction='none'.
