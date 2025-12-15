@@ -226,6 +226,16 @@ def run_loss_benchmark(config_overrides: Dict[str, Any], env_vars: Dict[str, str
 
     except subprocess.TimeoutExpired as e:
         print(f"Run timed out", flush=True)
+        print("--- Stdout during timeout ---", flush=True)
+        if e.stdout:
+            print(e.stdout, flush=True)
+        else:
+            print("(No stdout captured)", flush=True)
+        print("--- Stderr during timeout ---", flush=True)
+        if e.stderr:
+            print(e.stderr, flush=True)
+        else:
+            print("(No stderr captured)", flush=True)
         return float("inf")
     except Exception as e:
         print(f"An error occurred: {e}", flush=True)
