@@ -58,6 +58,9 @@ def run_benchmark(config_overrides: Dict[str, Any], env_vars: Dict[str, str], ba
             try:
                 with open(base_config_path) as f:
                     base_conf = json.load(f)
+                    # Check if it is a run_config.json style (nested) or flat
+                    if "parameters" in base_conf:
+                        base_conf = base_conf["parameters"]
                     seq_len = int(base_conf.get("max_seq_len", 2048))
             except:
                 pass
@@ -166,6 +169,8 @@ def run_loss_benchmark(config_overrides: Dict[str, Any], env_vars: Dict[str, str
         try:
             with open(base_config_path) as f:
                 base_conf = json.load(f)
+                if "parameters" in base_conf:
+                    base_conf = base_conf["parameters"]
                 seq_len = int(base_conf.get("max_seq_len", 2048))
         except:
             pass
@@ -236,6 +241,8 @@ def main():
     parser.add_argument("--tune-optimizer", action="store_true", help="Enable Optimizer tuning (slow)")
     # New flag: tune-hyperparams (alias for enabling comprehensive hyperparam tuning including LoRA)
     parser.add_argument("--tune-hyperparams", action="store_true", help="Enable comprehensive hyperparameter tuning (LR, Sched, LoRA)")
+    parser.add_argument("--try-all-variations", action="store_true", help="Force grid search for batch size/compile options even if config has them")
+
     args, unknown = parser.parse_known_args()
 
     # Consolidate flags
@@ -245,11 +252,21 @@ def main():
 
     # Load Base Configuration for reference (but don't rely on it for cmd construction unless needed)
     base_config = {}
+    base_env = {}
+
     if args.config:
         print(f"Loading base configuration from {args.config}", flush=True)
         try:
             with open(args.config) as f:
-                base_config = json.load(f)
+                json_data = json.load(f)
+                # Check for nested format (from run_config.json)
+                if "parameters" in json_data and isinstance(json_data["parameters"], dict):
+                    base_config = json_data["parameters"]
+                    print("Detected nested configuration format (run_config.json style).", flush=True)
+                    if "env_vars" in json_data and isinstance(json_data["env_vars"], dict):
+                        base_env = json_data["env_vars"]
+                else:
+                    base_config = json_data
         except Exception as e:
              print(f"Error loading config file: {e}", flush=True)
              sys.exit(1)
@@ -298,38 +315,6 @@ def main():
     if is_strix_halo:
         print("Detected Variant: Strix Halo (gfx1151)", flush=True)
 
-    # 2. Define Search Space
-    # Batch sizes to try. We start small and go up.
-    batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 256]
-
-    # Compilation flags
-    compile_options = [True, False] if is_rocm else [True]
-    compile_dynamic_options = [False] # Default to static shapes
-
-    # Handle CPU Fallback logic for compilation
-    # If we are on CPU (no ROCm/CUDA), we must ensure we don't try incompatible modes like reduce-overhead
-    # But this script calls base_train.py which now handles the downgrade warning.
-    # However, we should be careful about what we search over.
-    if not is_rocm and not torch.cuda.is_available(): # CPU
-         # On CPU, compiling might be slow or unstable with certain options.
-         # We default to [True] but we should ensure compile_mode isn't forced to something bad later.
-         pass
-
-    if is_strix_halo:
-        print("NOTE: Strix Halo detected. Enabling dynamic=True/False investigation.", flush=True)
-        # We allow compile=True to be tested, specifically to investigate dynamic=True vs False
-        compile_options = [True, False]
-        compile_dynamic_options = [False, True]
-
-    # Environment variable combinations
-    env_configs = [{}]
-    if is_rocm:
-        # Tuning ROCm specific flags
-        env_configs = [
-            {"TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "0"},
-            {"TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "1"}
-        ]
-
     MINIMAL_VALIDATION = True
     if MINIMAL_VALIDATION:
         print("NOTE: Minimal validation enabled (eval_tokens reduced) to prevent timeouts.", flush=True)
@@ -337,57 +322,116 @@ def main():
     best_throughput = 0.0
     best_overrides = None
     best_env = None
-
     results = []
 
-    # Grid search for Throughput
-    print("\nPhase 1: Throughput Tuning (Batch Size & Compilation)", flush=True)
-    depth = base_config.get("depth", 10) # default fallback
-    seq_len = int(base_config.get("max_seq_len", 2048))
+    # Decide whether to run Phase 1 (Throughput Tuning)
+    should_run_throughput = True
 
-    for env_vars in env_configs:
-        for compile_opt in compile_options:
-            current_dynamic_options = compile_dynamic_options if compile_opt else [False]
+    if not args.try_all_variations and "device_batch_size" in base_config:
+        print("\nConfiguration already contains 'device_batch_size'. Skipping throughput tuning.", flush=True)
+        should_run_throughput = False
 
-            for dynamic_opt in current_dynamic_options:
-                for bs in batch_sizes:
-                    # Construct overrides
-                    overrides = {
-                        "device_batch_size": bs,
-                        "depth": depth,
-                        "compile": str(compile_opt),
-                        "compile_dynamic": str(dynamic_opt),
-                        "eval_tokens": bs * seq_len, # Scale validation to avoid timeout (1 step)
-                    }
+        # Populate best settings from config
+        best_overrides = {
+            "device_batch_size": base_config["device_batch_size"],
+            "depth": base_config.get("depth", 10),
+            "compile": base_config.get("compile", False),
+            "compile_dynamic": base_config.get("compile_dynamic", False),
+        }
 
-                    throughput = run_benchmark(overrides, env_vars, base_config_path=args.config, base_config=base_config, extra_args=unknown, minimal_validation=MINIMAL_VALIDATION)
+        # Also ensure compile_mode is carried over if present
+        if "compile_mode" in base_config:
+            best_overrides["compile_mode"] = base_config["compile_mode"]
 
-                    if throughput > 0:
-                        results.append((overrides, env_vars, throughput))
-                        if throughput > best_throughput:
-                            best_throughput = throughput
-                            best_overrides = overrides
-                            best_env = env_vars
-                    else:
-                        # If we failed (likely OOM), larger batch sizes will likely also fail
-                        # So break the inner loop
-                        print(f"Batch size {bs} failed, stopping search for this env config.", flush=True)
-                        break
+        # Use loaded env vars if available, else empty (or default)
+        best_env = base_env if base_env else {}
 
-    if not results:
-        print("No successful runs found.", flush=True)
-        sys.exit(1)
+        # Try to retrieve throughput if stored in json_data (local var inside check above needs to be accessible?)
+        # We need to re-read or just assume 0.0 since we skipped it.
+        # But we can try to guess it from the original file read if needed, but it's not critical for logic.
+        print(f"Using loaded settings: BS={best_overrides['device_batch_size']}, Compile={best_overrides['compile']}", flush=True)
 
-    # Sort by throughput
-    results.sort(key=lambda x: x[2], reverse=True)
+    if should_run_throughput:
+        # 2. Define Search Space
+        # Batch sizes to try. We start small and go up.
+        batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 256]
 
-    for ovr, env, tp in results:
-        env_str = " ".join([f"{k}={v}" for k,v in env.items()]) if env else "Default Env"
-        print(f"Throughput: {tp:,.2f} tok/sec | BS: {ovr['device_batch_size']} | Compile: {ovr['compile']} | Dynamic: {ovr.get('compile_dynamic', 'False')} | Env: {env_str}", flush=True)
+        # Compilation flags
+        compile_options = [True, False] if is_rocm else [True]
+        compile_dynamic_options = [False] # Default to static shapes
 
-    print("\n" + "="*40, flush=True)
-    print(f"Best Throughput: {best_throughput:,.2f} tok/sec", flush=True)
-    print("="*40, flush=True)
+        # Handle CPU Fallback logic for compilation
+        # If we are on CPU (no ROCm/CUDA), we must ensure we don't try incompatible modes like reduce-overhead
+        # But this script calls base_train.py which now handles the downgrade warning.
+        # However, we should be careful about what we search over.
+        if not is_rocm and not torch.cuda.is_available(): # CPU
+             # On CPU, compiling might be slow or unstable with certain options.
+             # We default to [True] but we should ensure compile_mode isn't forced to something bad later.
+             pass
+
+        if is_strix_halo:
+            print("NOTE: Strix Halo detected. Enabling dynamic=True/False investigation.", flush=True)
+            # We allow compile=True to be tested, specifically to investigate dynamic=True vs False
+            compile_options = [True, False]
+            compile_dynamic_options = [False, True]
+
+        # Environment variable combinations
+        env_configs = [{}]
+        if is_rocm:
+            # Tuning ROCm specific flags
+            env_configs = [
+                {"TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "0"},
+                {"TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "1"}
+            ]
+
+        # Grid search for Throughput
+        print("\nPhase 1: Throughput Tuning (Batch Size & Compilation)", flush=True)
+        depth = base_config.get("depth", 10) # default fallback
+        seq_len = int(base_config.get("max_seq_len", 2048))
+
+        for env_vars in env_configs:
+            for compile_opt in compile_options:
+                current_dynamic_options = compile_dynamic_options if compile_opt else [False]
+
+                for dynamic_opt in current_dynamic_options:
+                    for bs in batch_sizes:
+                        # Construct overrides
+                        overrides = {
+                            "device_batch_size": bs,
+                            "depth": depth,
+                            "compile": str(compile_opt),
+                            "compile_dynamic": str(dynamic_opt),
+                            "eval_tokens": bs * seq_len, # Scale validation to avoid timeout (1 step)
+                        }
+
+                        throughput = run_benchmark(overrides, env_vars, base_config_path=args.config, base_config=base_config, extra_args=unknown, minimal_validation=MINIMAL_VALIDATION)
+
+                        if throughput > 0:
+                            results.append((overrides, env_vars, throughput))
+                            if throughput > best_throughput:
+                                best_throughput = throughput
+                                best_overrides = overrides
+                                best_env = env_vars
+                        else:
+                            # If we failed (likely OOM), larger batch sizes will likely also fail
+                            # So break the inner loop
+                            print(f"Batch size {bs} failed, stopping search for this env config.", flush=True)
+                            break
+
+        if not results:
+            print("No successful runs found.", flush=True)
+            sys.exit(1)
+
+        # Sort by throughput
+        results.sort(key=lambda x: x[2], reverse=True)
+
+        for ovr, env, tp in results:
+            env_str = " ".join([f"{k}={v}" for k,v in env.items()]) if env else "Default Env"
+            print(f"Throughput: {tp:,.2f} tok/sec | BS: {ovr['device_batch_size']} | Compile: {ovr['compile']} | Dynamic: {ovr.get('compile_dynamic', 'False')} | Env: {env_str}", flush=True)
+
+        print("\n" + "="*40, flush=True)
+        print(f"Best Throughput: {best_throughput:,.2f} tok/sec", flush=True)
+        print("="*40, flush=True)
 
     # -------------------------------------------------------------------------
     # Phase 2: Hyperparameter Tuning (LRs, Optimizer, LoRA)
@@ -402,7 +446,18 @@ def main():
         if "compile" in final_config and final_config["compile"] == "False": final_config["compile"] = False
 
     # Also check if we should tune torch.compile modes if compilation is enabled
-    if final_config.get("compile") is True:
+    # We only do this if we just ran the throughput tuning OR if we want to refine it.
+    # But usually, if we skipped Phase 1, we assume the config is good.
+    # However, user might want to tune hyperparameters but NOT throughput,
+    # and maybe compilation mode tuning is considered part of "throughput/system" tuning.
+    # Let's say we skip it if we skipped Phase 1, unless user explicitly requested hyperparam tuning?
+    # Actually, the logic below says "Phase 1.5". If we skipped Phase 1, we probably want to skip this too
+    # because 'best_throughput' might be 0.0 or just a placeholder, so comparisons will be weird.
+    # BUT, if the user provides a config, maybe they want to retune compilation mode?
+    # For now, let's allow it ONLY if we ran Phase 1, OR if we want to trust the loaded config.
+    # The safest bet for "Use the best config" is to skip this refinement step unless we are exploring.
+
+    if should_run_throughput and final_config.get("compile") is True:
         # Simple heuristic: try 'reduce-overhead' and 'default'
         # 'max-autotune' is often too slow for this quick tuner
         print("\nPhase 1.5: Tuning Compilation Mode", flush=True)
