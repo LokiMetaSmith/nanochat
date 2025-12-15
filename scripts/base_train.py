@@ -20,9 +20,9 @@ from contextlib import nullcontext
 import wandb
 import torch
 if torch.cuda.is_available() or (hasattr(torch.version, 'hip') and torch.version.hip):
+    # Set precision high for TensorFloat32 if available (applies to both CUDA and ROCm)
+    torch.set_float32_matmul_precision("high")
     if torch.cuda.is_available():
-        # Set precision high for TensorFloat32 if available
-        torch.set_float32_matmul_precision("high")
         torch.backends.cuda.matmul.allow_tf32 = True
 
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -502,10 +502,20 @@ while True:
                 # We need to prepend padding
                 vision_padding = torch.full((y.shape[0], padding_len), -1, dtype=y.dtype, device=y.device)
                 y_padded = torch.cat([vision_padding, y], dim=1)
-
-                loss = model(x, images=images, sensors=sensors, surface=surface, targets=y_padded, action_targets=action_targets)
+                final_targets = y_padded
             else:
-                loss = model(x, images=images, sensors=sensors, surface=surface, targets=y, action_targets=action_targets)
+                final_targets = y
+
+            if use_infovore:
+                loss, metrics = infovore_agent.compute_nrq_loss(
+                    model, x, final_targets,
+                    images=images, sensors=sensors, surface=surface, action_targets=action_targets
+                )
+                # We could log the metrics here, but we are inside a micro-step.
+                # Just averaging them for logging might be tricky without plumbing.
+                # For now, let's just use the weighted loss.
+            else:
+                loss = model(x, images=images, sensors=sensors, surface=surface, targets=final_targets, action_targets=action_targets)
 
         train_loss = loss.detach() # for logging
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
