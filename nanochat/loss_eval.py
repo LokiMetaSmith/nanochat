@@ -29,6 +29,9 @@ def evaluate_bpb(model, batches, steps, token_bytes):
     total_bytes = torch.tensor(0, dtype=torch.int64, device=model.get_device())
     batch_iter = iter(batches)
     for _ in range(steps):
+        # Mark the beginning of a step for CUDAGraphs (required for reduce-overhead mode)
+        if hasattr(torch.compiler, "cudagraph_mark_step_begin"):
+            torch.compiler.cudagraph_mark_step_begin()
         x, y = next(batch_iter)
         loss2d = model(x, targets=y, loss_reduction='none') # (B, T)
         loss2d = loss2d.view(-1) # flatten
