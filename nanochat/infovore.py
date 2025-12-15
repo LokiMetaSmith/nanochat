@@ -62,6 +62,10 @@ class Infovore:
         # and forward any additional arguments (images, sensors, etc.) via kwargs.
         raw_loss, hidden_states = model(idx, targets=targets, loss_reduction='none', return_embeddings=True, **kwargs)
 
+        # Clone raw_loss to prevent CUDAGraphs from overwriting it if the buffer is reused.
+        # This is crucial when using torch.compile(mode='reduce-overhead').
+        raw_loss = raw_loss.clone()
+
         # raw_loss is (B*T,) flattened or (B, T) depending on implementation.
         # GPT.forward returns F.cross_entropy with reduction='none'.
         # F.cross_entropy with reduction='none' returns (N,) if input is (N, C) and target is (N,).
