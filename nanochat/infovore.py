@@ -75,7 +75,8 @@ class Infovore:
 
         # We detach hidden_states because we don't want to backpropagate through the relation metric.
         # This saves memory by not extending the graph further.
-        hidden_states = hidden_states.detach()
+        # We also clone it to ensure we don't hold a reference to the CUDAGraph static output buffer.
+        hidden_states = hidden_states.detach().clone()
 
         # manifold: (D) -> reshape to (1, D) for broadcast
         manifold_view = self.manifold_centroid.view(1, -1)
