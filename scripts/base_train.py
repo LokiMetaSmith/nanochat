@@ -163,6 +163,11 @@ if device.type == 'cpu' and compile_mode == 'reduce-overhead':
     print0("WARNING: 'reduce-overhead' compile mode is not compatible with CPU. Switching to 'default'.")
     compile_mode = 'default'
 
+# Downgrade compile mode if Infovore is enabled to avoid CUDAGraphs memory overwrite issues
+if use_infovore and compile and compile_mode == 'reduce-overhead':
+    print0("WARNING: Infovore (Curriculum Learning) is currently incompatible with 'reduce-overhead' (CUDAGraphs) due to memory management conflicts. Switching to 'default' compilation mode.")
+    compile_mode = 'default'
+
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
 autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
