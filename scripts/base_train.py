@@ -86,6 +86,12 @@ robotics_surface_tokens = 4
 robotics_action_loss_weight = 1.0 # Loss weight for latent action prediction
 robotics_use_diffusion = False # Enable Diffusion Policy Head
 robotics_diffusion_steps = 100
+# LoRA (Low-Rank Adaptation)
+use_lora = False # Enable LoRA
+lora_rank = 8
+lora_alpha = 16
+lora_dropout = 0.05
+lora_targets = ["q_proj", "v_proj"]
 # Data Loading
 continual = False # Enable continual learning (poll for new data)
 
@@ -230,7 +236,12 @@ model_config_kwargs = dict(
     robotics_surface_dim=robotics_surface_dim,
     robotics_sensor_tokens=robotics_sensor_tokens,
     robotics_surface_tokens=robotics_surface_tokens,
-    robotics_action_loss_weight=robotics_action_loss_weight
+    robotics_action_loss_weight=robotics_action_loss_weight,
+    use_lora=use_lora,
+    lora_rank=lora_rank,
+    lora_alpha=lora_alpha,
+    lora_dropout=lora_dropout,
+    lora_targets=lora_targets
 )
 with torch.device("meta"):
     model_config = GPTConfig(**model_config_kwargs)
