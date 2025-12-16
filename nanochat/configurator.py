@@ -37,6 +37,14 @@ def get_config(defaults: dict, argv: list = None) -> dict:
     if argv is None:
         argv = sys.argv[1:]
 
+    if '-h' in argv or '--help' in argv:
+        print("Usage: python script.py [config_file] [--key=value ...]")
+        print("\nAvailable configuration keys (and defaults):")
+        # sort defaults for nicer output
+        for k, v in sorted(defaults.items()):
+            print(f"  --{k} : {type(v).__name__} = {v}")
+        sys.exit(0)
+
     updates = {}
 
     for arg in argv:
