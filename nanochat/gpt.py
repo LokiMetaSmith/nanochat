@@ -624,7 +624,7 @@ class GPT(nn.Module):
             if return_embeddings:
                 # We clone x to ensure it doesn't share memory with internal buffers (like wte output)
                 # which can cause CUDAGraph overwrites during backward.
-                return total_loss, x.clone()
+                return total_loss.clone(), x.clone()
             return total_loss
         else:
             # inference: return logits AND action_pred if robotics enabled
