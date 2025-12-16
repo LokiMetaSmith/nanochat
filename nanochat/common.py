@@ -6,9 +6,13 @@ import os
 import re
 import logging
 import urllib.request
+import warnings
 import torch
 import torch.distributed as dist
 from filelock import FileLock
+
+# Suppress the specific TensorFloat32 warning from Inductor which is a false positive on some AMD ROCm setups
+warnings.filterwarnings("ignore", message="TensorFloat32 tensor cores for float32 matrix multiplication available but not enabled")
 
 class ColoredFormatter(logging.Formatter):
     """Custom formatter that adds colors to log messages."""
