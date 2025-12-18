@@ -457,28 +457,24 @@ def main():
 
     # Also check if we should tune torch.compile modes if compilation is enabled
     # We only do this if we just ran the throughput tuning OR if we want to refine it.
-    # But usually, if we skipped Phase 1, we assume the config is good.
-    # However, user might want to tune hyperparameters but NOT throughput,
-    # and maybe compilation mode tuning is considered part of "throughput/system" tuning.
-    # Let's say we skip it if we skipped Phase 1, unless user explicitly requested hyperparam tuning?
-    # Actually, the logic below says "Phase 1.5". If we skipped Phase 1, we probably want to skip this too
-    # because 'best_throughput' might be 0.0 or just a placeholder, so comparisons will be weird.
-    # BUT, if the user provides a config, maybe they want to retune compilation mode?
-    # For now, let's allow it ONLY if we ran Phase 1, OR if we want to trust the loaded config.
-    # The safest bet for "Use the best config" is to skip this refinement step unless we are exploring.
-
     if should_run_throughput and final_config.get("compile") is True:
-        # Simple heuristic: try 'reduce-overhead' and 'default'
-        # 'max-autotune' is often too slow for this quick tuner
         print("\nPhase 1.5: Tuning Compilation Mode", flush=True)
         # We already have result for default (mode="") which is best_throughput
-        best_mode = None
-        modes_to_try = ["reduce-overhead"] # Add more if desired
+        # If best_throughput came from a run where compile_mode was NOT set (or default), we should check others.
+        # Note: default compile_mode in base_train is 'reduce-overhead'. So we should explicitly test variations.
+
+        best_mode = final_config.get("compile_mode", "reduce-overhead")
+        modes_to_try = ["default", "reduce-overhead", "max-autotune"]
 
         # We use the best batch size from Phase 1
         bs = final_config["device_batch_size"]
 
         for mode in modes_to_try:
+            # Skip if we already tested this mode implicitly and it failed?
+            # It's hard to know. Let's just re-test or test new ones.
+            # If we just ran throughput tuning, we likely used the default "reduce-overhead" in base_train.py?
+            # No, base_train defaults to "reduce-overhead", but we didn't override it in Phase 1 loops (except via implicit default).
+
             overrides = final_config.copy()
             overrides["compile_mode"] = mode
 
@@ -577,13 +573,13 @@ def main():
 
     if args.tune_optimizer:
         print("\nPhase 3: Optimizer Tuning", flush=True)
-        # Example: Tune weight decay
-        base_wd = float(final_config.get("weight_decay", 0.0))
-        # Try 0.0, 0.01, 0.1
-        wds = [0.0, 0.01, 0.1]
 
         best_loss = float("inf")
         best_opt_config = {}
+
+        # 3a. Weight Decay
+        base_wd = float(final_config.get("weight_decay", 0.0))
+        wds = [0.0, 0.01, 0.1]
 
         for wd in wds:
             overrides = final_config.copy()
@@ -603,8 +599,83 @@ def main():
                 best_opt_config = {"weight_decay": wd}
 
         if best_opt_config:
-             print(f"Found better Optimizer params: {best_opt_config} with loss {best_loss:.4f}")
-             final_config.update(best_opt_config)
+            final_config.update(best_opt_config)
+            best_loss = float("inf") # Reset for next phase? Or keep cumulative?
+                                     # Actually, we should probably keep improving `final_config` incrementally.
+                                     # But if we reset best_loss, we need a baseline.
+                                     # For simplicity, let's assume we proceed with the best config so far.
+
+        # 3b. Optimizer Backends & 8-bit
+        # We iterate over valid combinations of matrix and general optimizers
+        # Matrix: ["muon", "nested_momentum"]
+        # General: ["adamw", "nested_momentum"]
+        # 8-bit: [True, False] (only for general optimizer usually)
+
+        matrix_backends = ["muon", "nested_momentum"]
+        general_backends = ["adamw", "nested_momentum"]
+        use_8bit_options = [False, True]
+
+        # We need a baseline loss for the current config to compare against
+        # Run a quick baseline with current `final_config`
+        baseline_loss = run_loss_benchmark(
+             final_config,
+             best_env,
+             base_config_path=args.config,
+             base_config=base_config,
+             extra_args=unknown,
+             steps=50
+        )
+        print(f"Baseline loss for Optimizer Tuning: {baseline_loss:.4f}", flush=True)
+        best_loss = baseline_loss
+
+        import itertools
+        opt_combinations = list(itertools.product(matrix_backends, general_backends, use_8bit_options))
+
+        best_backend_config = {}
+
+        for m_backend, g_backend, use_8bit in opt_combinations:
+            # Skip invalid or redundant combinations if known?
+            # e.g. if 8bit is True but backend is nested_momentum, does it support it?
+            # gpt.py code:
+            # if general_optimizer_backend == "adamw": ... supports 8bit
+            # elif general_optimizer_backend == "nested_momentum": ... DOES NOT support 8bit explicitly in code?
+            # Checking gpt.py: nested_momentum branch does NOT check use_8bit_optimizer.
+            # So if use_8bit is True and backend is nested_momentum, it is ignored (or 8bit not used).
+            # We can skip testing use_8bit=True for nested_momentum to save time.
+            if g_backend == "nested_momentum" and use_8bit:
+                continue
+
+            overrides = final_config.copy()
+            overrides["matrix_optimizer_backend"] = m_backend
+            overrides["general_optimizer_backend"] = g_backend
+            overrides["use_8bit_optimizer"] = use_8bit
+
+            # Print what we are trying
+            print(f"Testing Optimizer: Matrix={m_backend}, General={g_backend}, 8bit={use_8bit}", flush=True)
+
+            loss = run_loss_benchmark(
+                overrides,
+                best_env,
+                base_config_path=args.config,
+                base_config=base_config,
+                extra_args=unknown,
+                steps=50
+            )
+
+            if loss < best_loss:
+                best_loss = loss
+                best_backend_config = {
+                    "matrix_optimizer_backend": m_backend,
+                    "general_optimizer_backend": g_backend,
+                    "use_8bit_optimizer": use_8bit
+                }
+                print(f"  -> Improved loss: {loss:.4f}", flush=True)
+            else:
+                print(f"  -> Loss: {loss:.4f} (not improved)", flush=True)
+
+        if best_backend_config:
+             print(f"Found better Optimizer Backends: {best_backend_config} with loss {best_loss:.4f}")
+             final_config.update(best_backend_config)
 
     # -------------------------------------------------------------------------
     # Phase 4: LoRA Tuning (if use_lora=True)
