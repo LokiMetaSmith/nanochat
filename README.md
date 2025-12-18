@@ -93,7 +93,7 @@ nanochat can be run on CPU or on MPS (if you're on Macbook), and will automatica
 
 ## System Tuner & LoRA (New!)
 
-nanochat now includes an expanded `scripts/tune_system.py` that can auto-tune both system performance (compilation modes, batch sizes) and model hyperparameters (learning rates, schedules). It also supports finding optimal configurations for **LoRA (Low-Rank Adaptation)** fine-tuning.
+nanochat now includes an expanded `scripts/tune_system.py` that can auto-tune both system performance (compilation modes, batch sizes) and model hyperparameters (learning rates, schedules, optimizer backends). It also supports finding optimal configurations for **LoRA (Low-Rank Adaptation)** fine-tuning.
 
 To tune hyperparameters (including LoRA if enabled):
 ```bash
@@ -101,6 +101,11 @@ python -m scripts.tune_system --tune-hyperparams --use_lora=True
 ```
 
 This will run short benchmarks to find the best `lora_rank` and `lora_alpha` that minimize loss.
+
+To tune optimizer backends (Muon vs Nested Momentum) and compilation modes (`reduce-overhead` vs `max-autotune`):
+```bash
+python -m scripts.tune_system --tune-optimizer
+```
 
 ## Experimental: Online Curriculum Learning (Infovore)
 
