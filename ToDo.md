@@ -14,9 +14,9 @@
 ## 🚀 Optimization & Strix Halo Specifics
 - [x] **MXFP4 Investigation**: Research and implement OCP Microscaling (MXFP4) support for inference using AMD Quark, once the ecosystem matures for APUs.
 - [x] **System Tuner Expansion**: Enhance `scripts/tune_system.py` to auto-tune:
-    - Learning rates and schedules.
-    - Optimizer hyperparameters (momentum, weight decay).
-    - [x] Compilation flags (`torch.compile` modes).
+    - [x] Learning rates and schedules.
+    - [x] Optimizer hyperparameters (momentum, weight decay) and backends (Muon vs NestedMomentum).
+    - [x] Compilation flags (`torch.compile` modes: default, reduce-overhead, max-autotune).
 - [x] **LoRA Support**: Implement Low-Rank Adaptation (`nanochat/lora.py`) and integrate with `tune_system.py`.
 - [x] **Torch Compile Dynamics**: Investigate `dynamic=True` vs `False` in `scripts/base_train.py` for variable sequence lengths on RDNA 3.5. (Implemented support for `dynamic` flag in `base_train.py` and `tune_system.py` to facilitate investigation).
 - [ ] **Distributed Tuning**: Benchmark RCCL vs Gloo backends specifically for APU-based distributed setups (if scaling to multi-node APUs).
