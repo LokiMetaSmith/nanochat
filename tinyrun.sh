@@ -128,7 +128,8 @@ torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_loss $CON
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval -- --max-per-task=16 # base_eval also reads config via configurator if passed, but args override
 
 # download 2.3MB of synthetic identity conversations to impart a personality to nanochat
-curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
+# curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
+python -m scripts.ensure_identity_data
 
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.mid_train $CONFIG_FILE --run=$WANDB_RUN
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i mid
