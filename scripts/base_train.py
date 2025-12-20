@@ -94,6 +94,8 @@ lora_dropout = 0.05
 lora_targets = ["q_proj", "v_proj"]
 # Data Loading
 continual = False # Enable continual learning (poll for new data)
+max_chars = 0 # Ignored: Maximum characters for tokenizer training (shared config)
+split_tokens = 0 # Ignored: Tokens per split for loss evaluation (shared config)
 
 # Training horizon. Only one of these 3 will be used, in this order of precedence.
 num_iterations = -1 # explicit number of steps of the optimization (-1 = disable)
