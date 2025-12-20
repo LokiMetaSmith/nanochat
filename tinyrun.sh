@@ -16,6 +16,25 @@ mkdir -p $NANOCHAT_BASE_DIR
 CONFIG_FILE="configs/tiny.json"
 
 # -----------------------------------------------------------------------------
+# Argument Parsing
+
+DO_TUNING=0
+TUNER_ARGS=""
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --tune-optimizer|--tune-lr|--tune-hyperparams|--try-all-variations)
+            DO_TUNING=1
+            TUNER_ARGS="$TUNER_ARGS $1"
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            ;;
+    esac
+    shift
+done
+
+# -----------------------------------------------------------------------------
 # Python venv setup with uv
 
 # install uv (if not already installed)
@@ -102,6 +121,18 @@ python -m scripts.tok_eval
 
 echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
+
+# -----------------------------------------------------------------------------
+# System Tuning (Optional)
+
+if [ "$DO_TUNING" -eq 1 ]; then
+    echo "Starting System/Optimizer Tuning..."
+    python -m scripts.tune_system --config "$CONFIG_FILE" $TUNER_ARGS
+    if [ -f "run_config.json" ]; then
+        echo "Tuning complete. Switching configuration to run_config.json"
+        CONFIG_FILE="run_config.json"
+    fi
+fi
 
 # -----------------------------------------------------------------------------
 # Process Setup
