@@ -9,5 +9,6 @@
     "max_chars": 2000000000,
     "save_every": -1,
     "compile": false,
-    "split_tokens": 512
+    "split_tokens": 512,
+    "compile_dynamic": false
 }
