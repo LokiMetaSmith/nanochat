@@ -1,0 +1,21 @@
+{
+  "parameters": {
+    "depth": 10,
+    "max_seq_len": 2048,
+    "device_batch_size": 1,
+    "compile": true,
+    "compile_dynamic": "False",
+    "eval_tokens": 2048,
+    "matrix_lr": 0.01,
+    "embedding_lr": 0.1,
+    "unembedding_lr": 0.002,
+    "warmup_ratio": 0.0,
+    "adam_warmup_ratio": 0.0,
+    "warmdown_ratio": 0.0,
+    "final_lr_frac": 0.0,
+    "weight_decay": 0.0,
+    "grad_clip": 0.0
+  },
+  "env_vars": {},
+  "throughput": 1000.0
+}

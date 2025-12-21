@@ -25,10 +25,14 @@ if torch.cuda.is_available() or (hasattr(torch.version, 'hip') and torch.version
     if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = True
 
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    # Allow overriding PYTORCH_CUDA_ALLOC_CONF/PYTORCH_HIP_ALLOC_CONF for tuning
+    if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
+        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
     # Also set the HIP-specific env var if on ROCm, as suggested by OOM errors
     if hasattr(torch.version, 'hip') and torch.version.hip:
-        os.environ["PYTORCH_HIP_ALLOC_CONF"] = "expandable_segments:True"
+        if "PYTORCH_HIP_ALLOC_CONF" not in os.environ:
+             os.environ["PYTORCH_HIP_ALLOC_CONF"] = "expandable_segments:True"
 
         # Check for Strix Halo (gfx1151) and enable experimental features
         try:
