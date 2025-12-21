@@ -126,6 +126,10 @@ class GPTConfig:
     vision_layers: int = 12
     vision_heads: int = 12
     vision_mlp_ratio: float = 4.0
+    # Visual Tokenizer params (Native discrete image tokens)
+    use_visual_tokens: bool = False
+    visual_tokenizer_path: str = "out/tokenizer_vision/visual_tokenizer.pt"
+    visual_vocab_size: int = 16384
     # Robotics params
     use_robotics: bool = False
     robotics_sensor_dim: int = 64
