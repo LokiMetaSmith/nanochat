@@ -740,7 +740,7 @@ def main():
 
     # Command line suggestion
     cmd_args = " ".join([f"--{k}={v}" for k,v in final_config.items()])
-    print(f"\nRun command with updated profile:\npython -m scripts.base_train {args.config if args.config else ''} --device_batch_size={final_config['device_batch_size']} --compile={final_config['compile']} --run=$WANDB_RUN", flush=True)
+    print(f"\nRun command with updated profile:\nbash run.sh -m scripts.base_train {args.config if args.config else ''} --device_batch_size={final_config['device_batch_size']} --compile={final_config['compile']} --run=$WANDB_RUN", flush=True)
 
     # Export results to JSON
     json_output = {
