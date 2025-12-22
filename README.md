@@ -69,7 +69,6 @@ That said, to give a sense, the example changes needed for the [speedrun.sh](spe
 # you'll need to download more data shards for pretraining
 # get the number of parameters, multiply 20 to get tokens, multiply by 4.8 to get chars,
 # divide by 250 million to get number of shards. todo need to improve this...
-<<<<<<< HEAD
 bash run.sh -m nanochat.dataset -n 450 &
 ...
 # use --depth to increase model size. to not oom, halve device batch size 32 -> 16:
@@ -77,15 +76,6 @@ bash run.sh -m torch.distributed.run --standalone --nproc_per_node=8 -m scripts.
 ...
 # make sure to use the same later during midtraining:
 bash run.sh -m torch.distributed.run --standalone --nproc_per_node=8 -m scripts.mid_train -- --device_batch_size=16
-=======
-python -m nanochat.dataset -n 450 &
-...
-# use --depth to increase model size. to not oom, halve device batch size 32 -> 16:
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=26 --device_batch_size=16
-...
-# make sure to use the same later during midtraining:
-torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --device_batch_size=16
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 ```
 
 That's it! The biggest thing to pay attention to is making sure you have enough data shards to train on (the code will loop and do more epochs over the same training set otherwise, decreasing learning speed a bit), and managing your memory/VRAM, primarily by decreasing the `device_batch_size` until things fit (the scripts automatically compensate by increasing the number of gradient accumulation loops, simply turning parallel compute to sequential compute).
@@ -107,22 +97,14 @@ nanochat now includes an expanded `scripts/tune_system.py` that can auto-tune bo
 
 To tune hyperparameters (including LoRA if enabled):
 ```bash
-<<<<<<< HEAD
 bash run.sh -m scripts.tune_system --tune-hyperparams --use_lora=True
-=======
-python -m scripts.tune_system --tune-hyperparams --use_lora=True
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 ```
 
 This will run short benchmarks to find the best `lora_rank` and `lora_alpha` that minimize loss.
 
 To tune optimizer backends (Muon vs Nested Momentum) and compilation modes (`reduce-overhead` vs `max-autotune`):
 ```bash
-<<<<<<< HEAD
 bash run.sh -m scripts.tune_system --tune-optimizer
-=======
-python -m scripts.tune_system --tune-optimizer
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 ```
 
 ## Experimental: Online Curriculum Learning (Infovore)
@@ -133,11 +115,7 @@ To enable this feature during training, use the `--use_infovore=True` flag. You 
 
 Example:
 ```bash
-<<<<<<< HEAD
 bash run.sh -m scripts.base_train --use_infovore=True --infovore_beta=0.99
-=======
-python -m scripts.base_train --use_infovore=True --infovore_beta=0.99
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 ```
 
 When enabled, the training loop will log three additional metrics to WandB: `train/nrq_avg`, `train/novelty_avg`, and `train/relation_avg`.
@@ -177,11 +155,7 @@ Alternatively, I recommend using [DeepWiki](https://deepwiki.com/karpathy/nanoch
 I haven't invested too much here but some tests exist, especially for the tokenizer. Run e.g. as:
 
 ```bash
-<<<<<<< HEAD
 bash run.sh -m pytest tests/test_rustbpe.py -v -s
-=======
-python -m pytest tests/test_rustbpe.py -v -s
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 ```
 
 ## File structure
@@ -274,10 +248,7 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── test_robotics.py
 │   ├── test_rustbpe.py
 │   └── test_train_integration.py
-<<<<<<< HEAD
 ├── run.sh                          # Universal execution wrapper
-=======
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 └── uv.lock
 ```
 

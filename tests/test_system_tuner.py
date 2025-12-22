@@ -29,7 +29,6 @@ step 3 | tok/sec: 300
         # Avg = 300.
         self.assertEqual(tp, 300.0)
 
-<<<<<<< HEAD
     @patch('subprocess.Popen')
     def test_loss_parsing(self, mock_popen):
         # Mock the process object
@@ -57,18 +56,6 @@ step 3 | tok/sec: 300
         mock_process.communicate.return_value = ("", "")
 
         mock_popen.return_value = mock_process
-=======
-    @patch('subprocess.run')
-    def test_loss_parsing(self, mock_run):
-        mock_process = MagicMock()
-        mock_process.returncode = 0
-        mock_process.stdout = """
-step 00048 | loss: 4.0
-step 00049 | loss: 3.5
-step 00050 | loss: 3.0
-"""
-        mock_run.return_value = mock_process
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 
         overrides = {}
         env = {}

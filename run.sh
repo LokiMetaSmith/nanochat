@@ -4,16 +4,10 @@ set -e
 # Usage: ./run.sh [python_script] [args...]
 # Example: ./run.sh scripts/tune_system.py
 # Example: ./run.sh -m scripts.tune_system
-<<<<<<< HEAD
 # Example: ./run.sh --deploy scripts/workflow.py --job tiny
 
 if [ "$#" -eq 0 ]; then
     echo "Usage: $0 [--deploy] [python_script] [args...]"
-=======
-
-if [ "$#" -eq 0 ]; then
-    echo "Usage: $0 [python_script] [args...]"
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
     exit 1
 fi
 
@@ -22,7 +16,6 @@ export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 
 # -----------------------------------------------------------------------------
-<<<<<<< HEAD
 # Flags
 DEPLOY=0
 if [ "$1" == "--deploy" ]; then
@@ -35,31 +28,12 @@ fi
 
 # Detect hardware
 # Logic shared between uv and deploy modes to select extras
-=======
-# Environment Setup
-
-# install uv
-command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
-[ -d ".venv" ] || uv venv
-source .venv/bin/activate
-
-# Force sync of amd dependencies to ensure rocminfo is available
-# Note: we must export the PATH to include the venv bin for rocminfo to be potentially found if it was installed there
-export PATH="$(pwd)/.venv/bin:$PATH"
-uv sync --extra amd > /dev/null 2>&1 || uv sync --extra amd
-
-# Detect hardware
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 if command -v nvidia-smi &> /dev/null; then
     EXTRAS="gpu"
 elif command -v rocminfo &> /dev/null; then
     EXTRAS="amd"
 else
-<<<<<<< HEAD
     # Double check if rocminfo is present in venv but not in PATH yet (only relevant for uv mode really, but good to check)
-=======
-    # Double check if rocminfo is present in venv but not in PATH yet (though we added it)
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
     if [ -f ".venv/bin/rocminfo" ]; then
          EXTRAS="amd"
     else
@@ -67,7 +41,6 @@ else
     fi
 fi
 
-<<<<<<< HEAD
 if [ "$DEPLOY" -eq 1 ]; then
     echo "Deploy mode: Skipping uv/venv setup..."
 
@@ -135,16 +108,6 @@ fi
 # -----------------------------------------------------------------------------
 # Shared Hardware Config (AMD Specifics)
 
-=======
-# Sync dependencies
-# Using silent sync if possible, but fallback to normal if it fails or first run
-uv sync --extra $EXTRAS > /dev/null 2>&1 || uv sync --extra $EXTRAS
-if [ -f "$HOME/.cargo/env" ]; then
-    source "$HOME/.cargo/env"
-fi
-
-# AMD Specifics
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 if [ "$EXTRAS" == "amd" ]; then
     # Get ROCm path from the installed package
     ROCM_PATH_SCRIPT="import sysconfig, os; p = f\"{sysconfig.get_paths()['purelib']}/_rocm_sdk_core\"; print(p) if os.path.exists(p) else print('')"
@@ -157,7 +120,6 @@ if [ "$EXTRAS" == "amd" ]; then
     fi
 
     # Fix Triton conflicts if triton is present
-<<<<<<< HEAD
     if [ "$DEPLOY" -eq 0 ]; then
         if uv pip show triton > /dev/null 2>&1; then
             uv pip uninstall -q triton
@@ -172,20 +134,10 @@ if [ "$EXTRAS" == "amd" ]; then
         # but pyproject doesn't seem to exclude triton explicitly.
         # The snippet didn't handle triton, so we'll leave it simple for deploy unless requested.
         :
-=======
-    if uv pip show triton > /dev/null 2>&1; then
-        uv pip uninstall -q triton
-        # Restore environment to ensure pytorch-triton-rocm is intact and correct version
-        uv sync --extra amd > /dev/null 2>&1
-    fi
-    # Ensure pytorch-triton-rocm is installed
-    if ! uv pip show pytorch-triton-rocm > /dev/null 2>&1; then
-        uv sync --extra amd > /dev/null 2>&1
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
     fi
 
     # LLD Path
-    ROCM_LLD_PATH=$(python -c "import sysconfig; import os; p = f\"{sysconfig.get_paths()['purelib']}/_rocm_sdk_core/lib/llvm/bin/ld.lld\"; print(p) if os.path.exists(p) else print('')")
+    ROCM_LLD_PATH=$(python -c "import sysconfig; import os; p = f\"{sysconfig.get_paths()['purelib']}/_rocm_sdk_core/lib/llvm/bin/ld.lld\"; print(p) if os.path.exists(p) else print('')"
     if [ -n "$ROCM_LLD_PATH" ]; then
         export TRITON_HIP_LLD_PATH=$ROCM_LLD_PATH
     fi
@@ -204,7 +156,6 @@ if [ "$EXTRAS" == "amd" ]; then
     fi
 fi
 
-<<<<<<< HEAD
 # -----------------------------------------------------------------------------
 # WANDB Setup
 
@@ -215,11 +166,5 @@ fi
 # -----------------------------------------------------------------------------
 # Execution
 
-=======
-# Build Rust Tokenizer
-uv run --no-sync --extra $EXTRAS maturin develop --release --manifest-path rustbpe/Cargo.toml > /dev/null 2>&1
-
-# Run the command
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 export PYTHONPATH="$PYTHONPATH:$(pwd)"
 exec python "$@"

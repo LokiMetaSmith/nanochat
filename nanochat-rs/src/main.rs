@@ -7,7 +7,6 @@ use std::fs;
 mod config;
 mod model;
 mod diffusion;
-<<<<<<< HEAD
 mod tiny_math;
 mod tiny_infovore;
 
@@ -15,46 +14,31 @@ use config::Config;
 use model::GPT;
 use tiny_infovore::TinyInfovore;
 use tiny_math::{Vector, Lcg};
-=======
-
-use config::Config;
-use model::GPT;
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Path to model checkpoint (safetensors or folder)
-<<<<<<< HEAD
     #[arg(long, default_value = "model.safetensors")]
-=======
-    #[arg(long)]
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
     model_path: String,
 
     /// Prompt to test
     #[arg(long, default_value = "Hello world")]
     prompt: String,
-<<<<<<< HEAD
 
     /// Run the Tiny Infovore simulation demo (learning loop)
     #[arg(long)]
     sim_infovore: bool,
-=======
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
 
-<<<<<<< HEAD
     if args.sim_infovore {
         run_infovore_demo();
         return Ok(());
     }
 
-=======
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
     // 1. Load Config (assume config.json exists or hardcoded for now)
     // In real app, read from model_path/config.json or parse from GGUF metadata
     let config = Config {
@@ -115,7 +99,6 @@ fn main() -> Result<()> {
 
     Ok(())
 }
-<<<<<<< HEAD
 
 fn run_infovore_demo() {
     println!("=== TinyInfovore Learning Demo ===");
@@ -194,5 +177,3 @@ fn run_infovore_demo() {
         }
     }
 }
-=======
->>>>>>> origin/visual-tokenizer-impl-1802865064392473967
