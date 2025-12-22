@@ -388,6 +388,7 @@ elif use_vision or user_config.get("use_visual_tokens", False):
     x, y, images, dataloader_state_dict = batch_data
 else:
     x, y, dataloader_state_dict = batch_data
+    images = None
 
 # Initialize Infovore Agent if enabled
 infovore_agent = None

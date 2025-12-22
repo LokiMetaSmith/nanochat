@@ -34,6 +34,7 @@ from nanochat.vision import VisionConfig, VisionTransformer, VisionProjector
 from nanochat.robotics import RoboticsConfig, RoboticsInterface
 from nanochat.lora import LoRALinear
 from torch.utils.checkpoint import checkpoint
+from nanochat.unitok import UniTok
 
 def _compute_loss_chunk(x_chunk, targets_chunk, lm_head, softcap, ignore_index, reduction):
     logits_chunk = lm_head(x_chunk)
