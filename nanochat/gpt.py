@@ -293,16 +293,47 @@ class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        # Adjust vocab size if using visual tokens
+        total_vocab_size = config.vocab_size
+        if config.use_visual_tokens:
+            total_vocab_size += config.visual_vocab_size
+
         self.transformer = nn.ModuleDict({
-            "wte": nn.Embedding(config.vocab_size, config.n_embd),
+            "wte": nn.Embedding(total_vocab_size, config.n_embd),
             "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
             "ln_pre": nn.RMSNorm(config.n_embd, elementwise_affine=config.rmsnorm_affine),
         })
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.n_embd, total_vocab_size, bias=False)
         self.ln_f = nn.RMSNorm(config.n_embd, elementwise_affine=config.rmsnorm_affine)
 
         # --- Multimodal Support ---
-        if config.use_vision:
+        if config.use_visual_tokens:
+            # Discrete Visual Tokens (UniTok)
+            self.visual_tokenizer = UniTok(vocab_size=config.visual_vocab_size)
+            # Load checkpoint if available
+            if config.visual_tokenizer_path:
+                try:
+                    # Map location to CPU first to avoid OOM
+                    state_dict = torch.load(config.visual_tokenizer_path, map_location="cpu", weights_only=True)
+                    self.visual_tokenizer.load_state_dict(state_dict)
+                    print0(f"Loaded visual tokenizer from {config.visual_tokenizer_path}")
+                except Exception as e:
+                    print0(f"Warning: Could not load visual tokenizer from {config.visual_tokenizer_path}: {e}")
+
+            # Freeze visual tokenizer
+            for p in self.visual_tokenizer.parameters():
+                p.requires_grad = False
+            self.visual_tokenizer.eval()
+
+            # Disable legacy Vision Encoder if Visual Tokens are enabled (to avoid confusion)
+            # Or should we allow both? The prompt implies replacing "text tokens" with "image tokens",
+            # but usually multimodality implies both.
+            # The user asked: "prove that image tokens are better than text tokens"
+            # We will allow both but prioritized logic in forward.
+            self.vision_encoder = None
+            self.vision_projector = None
+
+        elif config.use_vision:
             vision_cfg = VisionConfig(
                 image_size=config.vision_image_size,
                 patch_size=config.vision_patch_size,
@@ -579,7 +610,187 @@ class GPT(nn.Module):
         x = self.transformer.wte(idx)
 
         # 1. Handle Vision
-        if self.config.use_vision and images is not None and self.vision_encoder is not None:
+        if self.config.use_visual_tokens and images is not None:
+             # Native Discrete Visual Tokens
+             # Encode images -> indices
+             with torch.no_grad():
+                 # Unitok encode returns: quant, loss, indices
+                 _, _, indices = self.visual_tokenizer.encode(images)
+                 # Indices are (B, H, W) or flattened?
+                 # test_unitok says: (B, H', W')
+                 # Flatten to (B, N)
+                 indices = indices.flatten(1)
+
+             # Shift indices into visual vocab range
+             visual_ids = indices + self.config.vocab_size
+
+             # Embed
+             vis_emb = self.transformer.wte(visual_ids) # (B, N_vis, n_embd)
+
+             # Prepend visual tokens to x
+             x = torch.cat([vis_emb, x], dim=1)
+
+             # Update targets if training
+             if targets is not None:
+                 # We assume the caller has already padded 'targets' at the beginning with -1s
+                 # to account for the vision tokens. We just need to fill them in.
+                 # Check lengths
+                 N_vis = visual_ids.size(1)
+                 # targets: (B, T_total)
+                 # x currently: (B, N_vis + T, n_embd)
+
+                 # Verify target length matches x length
+                 if targets.size(1) == x.size(1):
+                     # Replace the prefix with visual_ids
+                     # We use a clone to avoid in-place modification errors in autograd if needed,
+                     # but targets is usually leaf or detached.
+                     # Note: We want to Predict the image tokens too?
+                     # Standard VQGAN-GPT: Yes, autoregressive on image tokens.
+                     # So targets[:, :N_vis] = visual_ids
+                     # BUT: Is it causal?
+                     # If we prepend all image tokens at once, the model sees them all in 'x'.
+                     # If we want to generate them autoregressively, we must ensure causal masking.
+                     # 'CausalSelfAttention' handles the masking.
+                     # So yes, we just put them in the sequence.
+
+                     # However, 'targets' is usually shifted by 1 relative to 'idx' in standard formulation.
+                     # But here 'targets' is aligned with the OUTPUT of the model at 'x'.
+                     # The model predicts 'targets[i]' given 'x[i]' (which includes x[0]...x[i]).
+                     # Wait. Standard GPT: input `idx[0:-1]`, target `idx[1:]`.
+                     # Here `idx` is passed as the Text input.
+                     # `x` is constructed as [ImageEmbeds, TextEmbeds].
+                     # So `x` corresponds to input sequence [I_0, I_1, ..., T_0, T_1...].
+                     # We want to predict [I_1, ..., T_0, ..., T_N].
+
+                     # If 'targets' passed in is (B, TotalLen), it usually assumes prediction at each step.
+                     # The caller (base_train.py) constructs targets by padding -1.
+                     # We replace the -1s with `visual_ids`.
+
+                     # Note: This implies we are predicting Image Token `i` given Image Token `i` (and history).
+                     # Wait. `x` contains the *ground truth* embedding of Image Token `i`.
+                     # Causal Attention masks future.
+                     # At pos `i`, we see `x[i]`. We predict `targets[i]`.
+                     # Usually for GPT, input is `tokens[:-1]`, target is `tokens[1:]`.
+                     # Here, we are effectively feeding `[I, T]` and predicting `[I, T]` (shifted?).
+
+                     # If `base_train.py` passes `idx` and `targets` such that `targets` is `idx` shifted...
+                     # Then `idx` (text) input matches `x` (text part).
+                     # We need to ensure `x` (image part) and `targets` (image part) are also shifted?
+                     # If we feed `x` = [I_0, I_1, ..., I_N], and `targets` = [I_1, ..., I_N, T_0...].
+                     # Then we are doing correct AR training.
+
+                     # BUT: `x` here is constructed from `images`. `images` represents the WHOLE image.
+                     # `visual_ids` are [I_0, ..., I_N].
+                     # If we embed ALL of them and put them in `x`, and set `targets` to ALL of them...
+                     # Then at step 0 (I_0), we see I_0 and predict I_0. That's trivial/leakage!
+
+                     # FIX: For AR image generation, we usually need <BOS> token for image start?
+                     # OR: We assume the first token is given or inferred from previous context?
+                     # If we just want to "train using image tokens", we can shift them:
+                     # Input: [I_0, I_1, ..., I_{N-1}]
+                     # Target: [I_1, I_2, ..., I_N]
+
+                     # But `visual_ids` contains ALL tokens.
+                     # So we should probably drop the last image token from Input, and first from Target?
+                     # This gets complicated with the `images` input which is a tensor (B, C, H, W).
+
+                     # Simplified approach for "Integration":
+                     # Teacher Forcing with Causal Mask.
+                     # If we feed [I_0...I_N] in `x`.
+                     # And targets are [I_0...I_N].
+                     # At step k, we attend to I_0...I_k. We predict I_k? No, we predict I_{k+1}.
+                     # We need the target at step k to be I_{k+1}.
+
+                     # So if `x` has I_k, `targets` should have I_{k+1}.
+                     # `targets` passed in is usually aligned with `x` output.
+                     # So we need to shift `visual_ids`?
+
+                     # Let's look at `base_train.py`.
+                     # `inputs = scratch[:-1]`, `targets = scratch[1:]`.
+                     # So text is already shifted.
+                     # Vision input `images` is the FULL image.
+                     # `visual_ids` = [t0, t1, t2, t3].
+                     # We want Input=[t0, t1, t2, t3?], Target=[t1, t2, t3, ?]
+
+                     # If we just concat, `x` will have [t0, t1, t2, t3].
+                     # Target part should be [t1, t2, t3, NextText?].
+                     # This implies we lose one visual token of context or prediction?
+
+                     # To avoid complex shifting logic here which might break `base_train` alignment:
+                     # We will fill `targets` with `visual_ids`.
+                     # BUT we must acknowledge that `x` at pos `k` is leaking `visual_ids[k]`.
+                     # Because `x[:, k]` is `wte(visual_ids[k])`.
+                     # And we predict `targets[:, k]` which is `visual_ids[k]`.
+                     # This is identity mapping!
+
+                     # **CRITICAL FIX**:
+                     # We must Shift the input `x` or the targets.
+                     # Since `x` is derived from `images`, we can't easily "shift" the image tensor itself before encoding.
+                     # We must shift the `visual_ids` before embedding!
+
+                     # We need a "Start of Image" token? Or use the last text token as trigger?
+                     # Let's assume we prepend a special `<|image_start|>` token?
+                     # Or just use 0 padding?
+
+                     # Let's try:
+                     # Input indices: [BOS_VIS, I_0, I_1, ..., I_{N-1}]
+                     # Target indices: [I_0, I_1, ..., I_{N-1}, I_N]  <-- Wait, I_N is lost?
+
+                     # Actually, `UniTok` gives fixed grid.
+                     # Let's say N=256.
+                     # Input: [I_0...I_255].
+                     # Target: [I_1...I_255, T_0].
+                     # This means `x` should be [I_0...I_255].
+                     # Target should be [I_1...T_0].
+                     # This requires shifting the WHOLE sequence?
+
+                     # Alternative:
+                     # Treat Image tokens as "Prompt" (Encoder) -> Don't predict them?
+                     # But goal is "Prove image tokens better... generate images".
+
+                     # Compromise for this PR:
+                     # We implement "Input" integration (Image Tokens as context).
+                     # And "Target" integration (Predict Image Tokens).
+                     # To prevent leakage:
+                     # `x_vis_emb = wte(visual_ids)`
+                     # We need to shift `visual_ids` to the right for input.
+                     # `visual_input_ids` = [0, I_0, I_1, ..., I_{N-1}].
+                     # `visual_target_ids` = [I_0, I_1, ..., I_{N}]. (Matches length N+1?)
+
+                     # Let's stick to strict length N.
+                     # Input: [0, I_0, ..., I_{N-1}] (Embed these)
+                     # Target: [I_0, I_1, ..., I_{N-1}] (Predict these)
+                     # Last token I_{N-1} predicts T_0?
+
+                     # This requires `x` to be modified.
+                     # `visual_ids` shape (B, N).
+                     # `input_ids` = torch.cat([torch.zeros((B,1)), visual_ids[:, :-1]], dim=1)
+                     # `target_ids` = visual_ids
+
+                     # Doing this:
+                     # 1. Shift visual_ids right (prepend 0/BOS, drop last).
+                     # 2. Embed.
+                     # 3. Targets = visual_ids.
+
+                     # This ensures we predict I_k from I_{k-1}.
+
+                     shifted_input_ids = torch.cat([
+                         torch.full((B, 1), 0, device=visual_ids.device, dtype=visual_ids.dtype), # Use 0 as BOS-Image? Or vocab_size?
+                         visual_ids[:, :-1]
+                     ], dim=1)
+
+                     vis_emb = self.transformer.wte(shifted_input_ids)
+                     x = torch.cat([vis_emb, x], dim=1)
+
+                     # Fill targets
+                     # We just overwrite the prefix
+                     targets[:, :N_vis] = visual_ids
+
+                     # Note: base_train uses -1 padding. We overwrite it.
+                 else:
+                     print0(f"Visual Tokenizer Target Mismatch: targets {targets.size(1)} != x {x.size(1)}")
+
+        elif self.config.use_vision and images is not None and self.vision_encoder is not None:
              # images: (B, C, H, W)
              vis_feats = self.vision_encoder(images) # (B, N_patches, vision_width)
              vis_feats = self.vision_projector(vis_feats) # (B, N_patches, n_embd)
