@@ -20,6 +20,10 @@
 - [x] **LoRA Support**: Implement Low-Rank Adaptation (`nanochat/lora.py`) and integrate with `tune_system.py`.
 - [x] **Torch Compile Dynamics**: Investigate `dynamic=True` vs `False` in `scripts/base_train.py` for variable sequence lengths on RDNA 3.5. (Implemented support for `dynamic` flag in `base_train.py` and `tune_system.py` to facilitate investigation).
 - [ ] **Distributed Tuning**: Benchmark RCCL vs Gloo backends specifically for APU-based distributed setups (if scaling to multi-node APUs).
+- [ ] **Optimizer Upgrade**: Upgrade `Muon` optimizer to "Polar Express" version (replaces Newton-Schulz).
+- [ ] **Skip Connections**: Implement U-Net style or dense skip connections.
+- [ ] **Training Recipe Tweaks**: Implement "Smearing", "Cautious Weight Decay", and "Logit Softcapping".
+- [ ] **Value Embeddings**: Investigate and implement Value Embeddings for discrete tokens (needs investigation for multimodal).
 
 ## 🛠 Codebase Maintenance & Tech Debt
 - [x] **DDP Detection**: Refactor `is_ddp()` in `nanochat/common.py` to use a more robust detection method.

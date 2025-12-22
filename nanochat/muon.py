@@ -5,6 +5,7 @@ Also a lot of borrowing of ideas from modded-nanogpt.
 import torch
 from torch import Tensor
 import torch.distributed as dist
+from nanochat.polar_express import polar_express
 
 # @torch.compile # Disable compilation for stability on AMD ROCm
 def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
@@ -18,22 +19,10 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
     performance at all relative to UV^T, where USV^T = G is the SVD.
     """
     assert G.ndim >= 2 # batched Muon implementation by @scottjmaddox, and put into practice in the record by @YouJiacheng
-    a, b, c = (3.4445, -4.7750,  2.0315)
-    X = G.bfloat16()
-    if G.size(-2) > G.size(-1):
-        X = X.mT
-
-    # Ensure spectral norm is at most 1
-    X = X / (X.norm(dim=(-2, -1), keepdim=True) + 1e-7)
-    # Perform the NS iterations
-    for _ in range(steps):
-        A = X @ X.mT
-        B = b * A + c * A @ A # quintic computation strategy adapted from suggestion by @jxbz, @leloykun, and @YouJiacheng
-        X = a * X + B @ X
-
-    if G.size(-2) > G.size(-1):
-        X = X.mT
-    return X
+    # Backward compatibility wrapper for old newtonschulz5 calls
+    # but the user requested upgrading to Polar Express, so we use it.
+    # Note: polar_express implementation handles the iteration internally with its own coefficients.
+    return polar_express(G)
 
 class Muon(torch.optim.Optimizer):
     """
@@ -103,7 +92,7 @@ class Muon(torch.optim.Optimizer):
                 buf: Tensor = state["momentum_buffer"]
                 buf.lerp_(g, 1 - group["momentum"])
                 g = g.lerp_(buf, group["momentum"]) if group["nesterov"] else buf
-                g = zeropower_via_newtonschulz5(g, steps=group["ns_steps"])
+                g = polar_express(g)
                 p.add_(g, alpha=-group["lr"] * max(1, p.size(-2) / p.size(-1))**0.5)
 
 
@@ -225,7 +214,7 @@ class DistMuon(torch.optim.Optimizer):
                     buf: Tensor = state["momentum_buffer"]
                     buf.lerp_(g, 1.0 - group["momentum"])
                     g = g.lerp_(buf, group["momentum"]) if group["nesterov"] else buf
-                    g = zeropower_via_newtonschulz5(g, steps=group["ns_steps"])
+                    g = polar_express(g)
                     scale = (max(1.0, p.size(-2) / p.size(-1)) ** 0.5)
                     p.add_(g, alpha=-group["lr"] * scale)
                 # Replicate updated parameters to all ranks
