@@ -25,6 +25,7 @@ if torch.cuda.is_available() or (hasattr(torch.version, 'hip') and torch.version
     if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = True
 
+<<<<<<< HEAD
     # Allow overriding PYTORCH_CUDA_ALLOC_CONF/PYTORCH_HIP_ALLOC_CONF for tuning
     if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -33,6 +34,12 @@ if torch.cuda.is_available() or (hasattr(torch.version, 'hip') and torch.version
     if hasattr(torch.version, 'hip') and torch.version.hip:
         if "PYTORCH_HIP_ALLOC_CONF" not in os.environ:
              os.environ["PYTORCH_HIP_ALLOC_CONF"] = "expandable_segments:True"
+=======
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    # Also set the HIP-specific env var if on ROCm, as suggested by OOM errors
+    if hasattr(torch.version, 'hip') and torch.version.hip:
+        os.environ["PYTORCH_HIP_ALLOC_CONF"] = "expandable_segments:True"
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 
         # Check for Strix Halo (gfx1151) and enable experimental features
         try:
@@ -134,7 +141,10 @@ compile_dynamic = False # whether to use dynamic shapes in torch.compile (dynami
 matrix_optimizer_backend = "muon" # "muon" or "nested_momentum"
 general_optimizer_backend = "adamw" # "adamw" (ZeRO-2), "dist_adamw" (legacy custom), or "nested_momentum"
 use_8bit_optimizer = False # use 8-bit optimizer (bitsandbytes) for general parameters
+<<<<<<< HEAD
 layer_lr_decay = 1.0 # Layer-wise Learning Rate Decay (1.0 = disabled)
+=======
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 nested_betas = (0.9, 0.99) # For nested_momentum
 nested_level_weights = (0.5, 0.5) # For nested_momentum
 # Infovore (Curriculum Learning)
@@ -310,7 +320,11 @@ optimizers = model.setup_optimizers(
     unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay,
     matrix_optimizer_backend=matrix_optimizer_backend, general_optimizer_backend=general_optimizer_backend,
     nested_betas=nested_betas, nested_level_weights=nested_level_weights,
+<<<<<<< HEAD
     use_8bit_optimizer=use_8bit_optimizer, layer_lr_decay=layer_lr_decay
+=======
+    use_8bit_optimizer=use_8bit_optimizer
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 )
 # Note: optimizers[0] is general (AdamW/Nested), optimizers[1] is matrix (Muon/Nested)
 general_optimizer, matrix_optimizer = optimizers

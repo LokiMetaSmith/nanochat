@@ -1,0 +1,16 @@
+{
+    "depth": 4,
+    "max_seq_len": 512,
+    "device_batch_size": 4,
+    "eval_tokens": 2048,
+    "total_batch_size": 4096,
+    "num_iterations": 1000,
+    "save_every": 200,
+    "compile": true,
+    "compile_mode": "reduce-overhead",
+    "use_visual_tokens": true,
+    "visual_vocab_size": 1024,
+    "visual_tokenizer_path": "out/tokenizer_vision/visual_tokenizer.pt",
+    "vision_image_size": 64,
+    "notes": "Small image size (64) for quick testing/experimentation on limited hardware. 64/16 = 4x4 grid = 16 tokens."
+}

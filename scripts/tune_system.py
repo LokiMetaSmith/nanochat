@@ -9,6 +9,7 @@ import argparse
 import itertools
 from typing import Dict, Any, List, Tuple
 import torch
+<<<<<<< HEAD
 import math
 
 # --- History Tracking ---
@@ -37,6 +38,8 @@ def save_history_entry(config: Dict, env: Dict, metric: float, metric_name: str,
     tuning_history.append(entry)
     with open(history_file, "w") as f:
         json.dump(tuning_history, f, indent=2)
+=======
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 
 def run_benchmark(config_overrides: Dict[str, Any], env_vars: Dict[str, str], base_config_path: str = None, base_config: Dict[str, Any] = None, extra_args: List[str] = [], steps: int = 5, minimal_validation: bool = True) -> float:
     """
@@ -117,10 +120,15 @@ def run_benchmark(config_overrides: Dict[str, Any], env_vars: Dict[str, str], ba
             # Check for OOM
             if "OutOfMemoryError" in result.stderr or "OutOfMemoryError" in result.stdout:
                 print("Failure reason: OutOfMemoryError", flush=True)
+<<<<<<< HEAD
                 save_history_entry(config_overrides, env_vars, 0.0, "throughput", "failed_oom", steps)
             else:
                 print(f"Stderr tail: {result.stderr[-5000:]}", flush=True)
                 save_history_entry(config_overrides, env_vars, 0.0, "throughput", "failed_error", steps)
+=======
+            else:
+                print(f"Stderr tail: {result.stderr[-5000:]}", flush=True)
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
             return -1.0
 
         # Parse output for tok/sec
@@ -140,16 +148,23 @@ def run_benchmark(config_overrides: Dict[str, Any], env_vars: Dict[str, str], ba
 
         if not tok_sec_values:
             print("Could not parse tok/sec from output", flush=True)
+<<<<<<< HEAD
             save_history_entry(config_overrides, env_vars, 0.0, "throughput", "failed_parse", steps)
+=======
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
             return -1.0
 
         avg_tok_sec = sum(tok_sec_values) / len(tok_sec_values)
         print(f"Result: {avg_tok_sec:.2f} tok/sec", flush=True)
+<<<<<<< HEAD
         save_history_entry(config_overrides, env_vars, avg_tok_sec, "throughput", "success", steps)
+=======
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
         return avg_tok_sec
 
     except subprocess.TimeoutExpired as e:
         print(f"Run timed out after {e.timeout} seconds", flush=True)
+<<<<<<< HEAD
         save_history_entry(config_overrides, env_vars, 0.0, "throughput", "failed_timeout", steps)
         return -1.0
     except Exception as e:
@@ -193,6 +208,28 @@ def run_loss_benchmark(config_overrides: Dict[str, Any], env_vars: Dict[str, str
     """
     Runs a training session for a fixed number of steps and returns the final (smoothed) loss.
     Implements dynamic stopping if convergence is stable.
+=======
+        print("--- Stdout during timeout ---", flush=True)
+        if e.stdout:
+            print(e.stdout, flush=True)
+        else:
+            print("(No stdout captured)", flush=True)
+
+        print("--- Stderr during timeout ---", flush=True)
+        if e.stderr:
+            print(e.stderr, flush=True)
+        else:
+            print("(No stderr captured)", flush=True)
+
+        return -1.0
+    except Exception as e:
+        print(f"An error occurred: {e}", flush=True)
+        return -1.0
+
+def run_loss_benchmark(config_overrides: Dict[str, Any], env_vars: Dict[str, str], base_config_path: str = None, base_config: Dict[str, Any] = None, extra_args: List[str] = [], steps: int = 50) -> float:
+    """
+    Runs a training session for a fixed number of steps and returns the final (smoothed) loss.
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
     Returns float("inf") if failed.
     """
 
@@ -236,6 +273,7 @@ def run_loss_benchmark(config_overrides: Dict[str, Any], env_vars: Dict[str, str
     current_env = os.environ.copy()
     current_env.update(env_vars)
 
+<<<<<<< HEAD
     print(f"Running loss benchmark (max_steps={steps}) with overrides: {config_overrides}", flush=True)
 
     # Dynamic Benchmarking Logic
@@ -340,20 +378,89 @@ def run_loss_benchmark(config_overrides: Dict[str, Any], env_vars: Dict[str, str
         print(f"An error occurred: {e}", flush=True)
         if process: process.kill()
         save_history_entry(config_overrides, env_vars, float("inf"), "loss", "failed_exception", steps)
+=======
+    print(f"Running loss benchmark (steps={steps}) with overrides: {config_overrides}", flush=True)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            env=current_env,
+            capture_output=True,
+            text=True,
+            timeout=3600 # 1 hour timeout for convergence tests
+        )
+
+        if result.returncode != 0:
+            print(f"Run failed with return code {result.returncode}", flush=True)
+            if "OutOfMemoryError" in result.stderr or "OutOfMemoryError" in result.stdout:
+                print("Failure reason: OutOfMemoryError", flush=True)
+            else:
+                print(f"Stderr tail: {result.stderr[-2000:]}", flush=True)
+            return float("inf")
+
+        # Parse output for loss
+        final_loss = float("inf")
+        # Look for lines like: step 00050/... | loss: 6.123456 | ...
+        # We take the loss from the last few steps
+        losses = []
+        for line in result.stdout.splitlines():
+            # Regex to capture loss
+            match = re.search(r"loss:\s*([\d\.]+)", line)
+            if match:
+                step_match = re.search(r"step\s+(\d+)", line)
+                if step_match:
+                    losses.append(float(match.group(1)))
+
+        if not losses:
+            print("Could not parse loss from output", flush=True)
+            return float("inf")
+
+        # Average the last 5 losses to smooth out noise
+        last_n = min(len(losses), 5)
+        final_loss = sum(losses[-last_n:]) / last_n
+
+        print(f"Result: {final_loss:.4f} loss", flush=True)
+        return final_loss
+
+    except subprocess.TimeoutExpired as e:
+        print(f"Run timed out", flush=True)
+        print("--- Stdout during timeout ---", flush=True)
+        if e.stdout:
+            print(e.stdout, flush=True)
+        else:
+            print("(No stdout captured)", flush=True)
+        print("--- Stderr during timeout ---", flush=True)
+        if e.stderr:
+            print(e.stderr, flush=True)
+        else:
+            print("(No stderr captured)", flush=True)
+        return float("inf")
+    except Exception as e:
+        print(f"An error occurred: {e}", flush=True)
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
         return float("inf")
 
 
 def main():
     print("Starting System Auto-Tuning...", flush=True)
+<<<<<<< HEAD
     load_history()
+=======
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 
     parser = argparse.ArgumentParser(description="Auto-tune system performance")
     parser.add_argument("--config", type=str, default=None, help="Path to base JSON configuration file")
     parser.add_argument("--tune-lr", action="store_true", help="Enable Learning Rate tuning (slow)")
     parser.add_argument("--tune-optimizer", action="store_true", help="Enable Optimizer tuning (slow)")
+<<<<<<< HEAD
     parser.add_argument("--tune-hyperparams", action="store_true", help="Enable comprehensive hyperparameter tuning (LR, Sched, LoRA, Layers)")
     parser.add_argument("--try-all-variations", action="store_true", help="Force grid search for batch size/compile options even if config has them")
     parser.add_argument("--max-benchmark-steps", type=int, default=50, help="Maximum number of steps for loss benchmarks (default: 50)")
+=======
+    # New flag: tune-hyperparams (alias for enabling comprehensive hyperparam tuning including LoRA)
+    parser.add_argument("--tune-hyperparams", action="store_true", help="Enable comprehensive hyperparameter tuning (LR, Sched, LoRA)")
+    parser.add_argument("--try-all-variations", action="store_true", help="Force grid search for batch size/compile options even if config has them")
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 
     args, unknown = parser.parse_known_args()
 
@@ -488,6 +595,7 @@ def main():
             compile_dynamic_options = [False, True]
 
         # Environment variable combinations
+<<<<<<< HEAD
         # We start with basic flags.
         # We also want to test PYTORCH_CUDA_ALLOC_CONF for memory optimization if desired or necessary.
         # Especially relevant for 24GB GPUs (RTX 3090) as per report.
@@ -518,10 +626,17 @@ def main():
 
             # Actually, let's mix them.
             rocm_configs = [
+=======
+        env_configs = [{}]
+        if is_rocm:
+            # Tuning ROCm specific flags
+            env_configs = [
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
                 {"TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "0"},
                 {"TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "1"}
             ]
 
+<<<<<<< HEAD
             # Cartesian product of base_env (memory) and rocm_configs (triton)
             new_configs = []
             for base in base_env_configs:
@@ -531,6 +646,8 @@ def main():
                     new_configs.append(merged)
             env_configs = new_configs
 
+=======
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
         # Grid search for Throughput
         print("\nPhase 1: Throughput Tuning (Batch Size & Compilation)", flush=True)
         depth = base_config.get("depth", 10) # default fallback
@@ -637,6 +754,7 @@ def main():
             print("Default compilation mode retained.", flush=True)
 
     if args.tune_lr:
+<<<<<<< HEAD
         print("\nPhase 2: Learning Rate & Decay Tuning", flush=True)
         # Define search space
         # We will tune matrix_lr (Muon), embedding_lr (Adam), layer_lr_decay and unembedding_lr
@@ -650,10 +768,22 @@ def main():
 
         # Layer Decay options: 1.0 (baseline), 0.9, 0.8
         decays = [1.0, 0.9, 0.8] if args.tune_hyperparams else [1.0]
+=======
+        print("\nPhase 2: Learning Rate Tuning", flush=True)
+        # Define search space
+        # We will tune matrix_lr (Muon) and embedding_lr (Adam)
+        # Center around defaults or current values
+        base_matrix_lr = float(final_config.get("matrix_lr", 0.02))
+        base_embed_lr = float(final_config.get("embedding_lr", 0.2))
+
+        # Grid: 0.5x, 1.0x, 2.0x
+        multipliers = [0.5, 1.0, 2.0]
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 
         best_loss = float("inf")
         best_lr_config = {}
 
+<<<<<<< HEAD
         # 3D Grid Search
         import itertools
         lr_combinations = list(itertools.product(lr_multipliers, lr_multipliers, lr_multipliers, decays))
@@ -664,12 +794,22 @@ def main():
             u_lr = base_unembed_lr * u_mult
 
             # Skip redundant 1.0 decay checks if we already did them (but combination with LR changes matters)
+=======
+        lr_combinations = list(itertools.product(multipliers, multipliers))
+
+        for m_mult, e_mult in lr_combinations:
+            m_lr = base_matrix_lr * m_mult
+            e_lr = base_embed_lr * e_mult
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 
             overrides = final_config.copy()
             overrides["matrix_lr"] = m_lr
             overrides["embedding_lr"] = e_lr
+<<<<<<< HEAD
             overrides["unembedding_lr"] = u_lr
             overrides["layer_lr_decay"] = decay
+=======
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 
             # Use the best env from throughput tuning
             loss = run_loss_benchmark(
@@ -678,17 +818,26 @@ def main():
                 base_config_path=args.config,
                 base_config=base_config,
                 extra_args=unknown,
+<<<<<<< HEAD
                 steps=args.max_benchmark_steps # User configurable max steps
+=======
+                steps=50 # Run for 50 steps to see convergence
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
             )
 
             if loss < best_loss:
                 best_loss = loss
+<<<<<<< HEAD
                 best_lr_config = {"matrix_lr": m_lr, "embedding_lr": e_lr, "unembedding_lr": u_lr, "layer_lr_decay": decay}
+=======
+                best_lr_config = {"matrix_lr": m_lr, "embedding_lr": e_lr}
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 
         if best_lr_config:
             print(f"Found better LRs: {best_lr_config} with loss {best_loss:.4f}")
             final_config.update(best_lr_config)
 
+<<<<<<< HEAD
     # Tuning schedule parameters
     if args.tune_lr: # Include schedule tuning with LR tuning
         print("\nPhase 2.5: Schedule Tuning", flush=True)
@@ -763,6 +912,37 @@ def main():
         if local_best_decays:
              print(f"  -> Found better decays: {local_best_decays}", flush=True)
              final_config.update(local_best_decays)
+=======
+    # Tuning schedule parameters (warmup_ratio)
+    if args.tune_lr: # Include schedule tuning with LR tuning
+        print("\nPhase 2.5: Schedule Tuning (warmup_ratio)", flush=True)
+        base_warmup = float(final_config.get("warmup_ratio", 0.0))
+        warmups = [0.0, 0.05, 0.1]
+
+        best_warmup_loss = float("inf")
+        best_warmup_config = {}
+
+        for w in warmups:
+            overrides = final_config.copy()
+            overrides["warmup_ratio"] = w
+
+            loss = run_loss_benchmark(
+                overrides,
+                best_env,
+                base_config_path=args.config,
+                base_config=base_config,
+                extra_args=unknown,
+                steps=50
+            )
+
+            if loss < best_warmup_loss:
+                best_warmup_loss = loss
+                best_warmup_config = {"warmup_ratio": w}
+
+        if best_warmup_config:
+             print(f"Found better warmup_ratio: {best_warmup_config} with loss {best_warmup_loss:.4f}")
+             final_config.update(best_warmup_config)
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 
     if args.tune_optimizer:
         print("\nPhase 3: Optimizer Tuning", flush=True)
@@ -770,6 +950,7 @@ def main():
         best_loss = float("inf")
         best_opt_config = {}
 
+<<<<<<< HEAD
         # 3a. Weight Decay & Gradient Clipping
         print("  -> Tuning Weight Decay and Gradient Clipping...", flush=True)
         base_wd = float(final_config.get("weight_decay", 0.0))
@@ -799,6 +980,30 @@ def main():
 
         if best_opt_config:
             print(f"  -> Found better decay/clip: {best_opt_config}", flush=True)
+=======
+        # 3a. Weight Decay
+        base_wd = float(final_config.get("weight_decay", 0.0))
+        wds = [0.0, 0.01, 0.1]
+
+        for wd in wds:
+            overrides = final_config.copy()
+            overrides["weight_decay"] = wd
+
+            loss = run_loss_benchmark(
+                overrides,
+                best_env,
+                base_config_path=args.config,
+                base_config=base_config,
+                extra_args=unknown,
+                steps=50
+            )
+
+            if loss < best_loss:
+                best_loss = loss
+                best_opt_config = {"weight_decay": wd}
+
+        if best_opt_config:
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
             final_config.update(best_opt_config)
             best_loss = float("inf") # Reset for next phase? Or keep cumulative?
                                      # Actually, we should probably keep improving `final_config` incrementally.
@@ -823,7 +1028,11 @@ def main():
              base_config_path=args.config,
              base_config=base_config,
              extra_args=unknown,
+<<<<<<< HEAD
              steps=args.max_benchmark_steps
+=======
+             steps=50
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
         )
         print(f"Baseline loss for Optimizer Tuning: {baseline_loss:.4f}", flush=True)
         best_loss = baseline_loss
@@ -859,7 +1068,11 @@ def main():
                 base_config_path=args.config,
                 base_config=base_config,
                 extra_args=unknown,
+<<<<<<< HEAD
                 steps=args.max_benchmark_steps
+=======
+                steps=50
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
             )
 
             if loss < best_loss:
@@ -911,7 +1124,11 @@ def main():
                     base_config_path=args.config,
                     base_config=base_config,
                     extra_args=unknown,
+<<<<<<< HEAD
                     steps=args.max_benchmark_steps
+=======
+                    steps=50
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
                 )
 
                 if loss < best_lora_loss:
@@ -940,7 +1157,11 @@ def main():
 
     # Command line suggestion
     cmd_args = " ".join([f"--{k}={v}" for k,v in final_config.items()])
+<<<<<<< HEAD
     print(f"\nRun command with updated profile:\nbash run.sh -m scripts.base_train {args.config if args.config else ''} --device_batch_size={final_config['device_batch_size']} --compile={final_config['compile']} --run=$WANDB_RUN", flush=True)
+=======
+    print(f"\nRun command with updated profile:\npython -m scripts.base_train {args.config if args.config else ''} --device_batch_size={final_config['device_batch_size']} --compile={final_config['compile']} --run=$WANDB_RUN", flush=True)
+>>>>>>> origin/visual-tokenizer-impl-1802865064392473967
 
     # Export results to JSON
     json_output = {

@@ -1,0 +1,22 @@
+[
+  {
+    "timestamp": 1766392811.845108,
+    "config": {},
+    "env": {},
+    "metric_value": Infinity,
+    "metric_name": "loss",
+    "status": "failed_exception",
+    "steps": 50
+  },
+  {
+    "timestamp": 1766392811.949206,
+    "config": {
+      "device_batch_size": 4
+    },
+    "env": {},
+    "metric_value": 300.0,
+    "metric_name": "throughput",
+    "status": "success",
+    "steps": 4
+  }
+]
