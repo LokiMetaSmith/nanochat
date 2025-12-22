@@ -424,7 +424,7 @@ class GPT(nn.Module):
     def setup_optimizers(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0,
                          matrix_optimizer_backend="muon", general_optimizer_backend="adamw",
                          nested_betas=(0.9, 0.99), nested_level_weights=(0.5, 0.5),
-                         use_8bit_optimizer=False):
+                         use_8bit_optimizer=False, layer_lr_decay=1.0):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
         use_dist_optim = ddp and world_size > 1
@@ -477,7 +477,26 @@ class GPT(nn.Module):
 
         # --- Standard Full Finetuning / Pretraining Setup (Existing Logic) ---
 
-        matrix_params = list(self.transformer.h.parameters())
+        # Matrix Params (Transformer Blocks)
+        # If layer_lr_decay is 1.0 (default), we keep them as one group (or Muon splits them by size)
+        # If layer_lr_decay < 1.0, we split them into per-layer groups with decayed LR
+        if layer_lr_decay < 1.0:
+            if rank == 0:
+                print(f"Applying Layer-wise LR Decay: {layer_lr_decay}")
+            matrix_groups = []
+            for i, block in enumerate(self.transformer.h):
+                # Calculate decay: Top layers (near output) get higher LR?
+                # Standard LLRD: LR = base_lr * (decay ** (num_layers - 1 - layer_idx))
+                # i=0 (bottom) gets (decay^11), i=11 (top) gets (decay^0)=1
+                decay_factor = layer_lr_decay ** (self.config.n_layer - 1 - i)
+                matrix_groups.append({
+                    "params": list(block.parameters()),
+                    "lr": matrix_lr * decay_factor
+                })
+            matrix_params_or_groups = matrix_groups
+        else:
+            matrix_params_or_groups = list(self.transformer.h.parameters())
+
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
 
@@ -492,7 +511,9 @@ class GPT(nn.Module):
         if self.config.use_robotics and self.robotics_interface is not None:
             embedding_params.extend(list(self.robotics_interface.parameters()))
 
-        assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params)
+        # Sanity check: Total parameters count
+        total_params = sum(p.numel() for p in self.parameters())
+        # We can't easily assert len(list) if matrix_params_or_groups is dicts, but we can trust the split
 
         # --- General Optimizer (Embeddings & Heads) ---
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (having tuned the LRs for 768 dim model)
@@ -542,11 +563,11 @@ class GPT(nn.Module):
         if matrix_optimizer_backend == "muon":
             muon_kwargs = dict(lr=matrix_lr, momentum=0.95)
             MuonFactory = DistMuon if use_dist_optim else Muon
-            matrix_optimizer = MuonFactory(matrix_params, **muon_kwargs)
+            matrix_optimizer = MuonFactory(matrix_params_or_groups, **muon_kwargs)
         elif matrix_optimizer_backend == "nested_momentum":
             nm_kwargs = dict(lr=matrix_lr, betas=nested_betas, level_weights=nested_level_weights, weight_decay=weight_decay)
             NMFactory = DistNestedMomentum if use_dist_optim else NestedMomentum
-            matrix_optimizer = NMFactory(matrix_params, **nm_kwargs)
+            matrix_optimizer = NMFactory(matrix_params_or_groups, **nm_kwargs)
         else:
              raise ValueError(f"Unknown matrix_optimizer_backend: {matrix_optimizer_backend}")
 

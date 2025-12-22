@@ -59,12 +59,36 @@ class Muon(torch.optim.Optimizer):
     """
     def __init__(self, params, lr=0.02, momentum=0.95, nesterov=True, ns_steps=5):
         defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
-        params: list[Tensor] = [*params]
-        param_groups = []
-        for size in {p.numel() for p in params}:
-            group = dict(params=[p for p in params if p.numel() == size])
-            param_groups.append(group)
-        super().__init__(param_groups, defaults)
+
+        params_list = list(params)
+        final_param_groups = []
+
+        # Handle case where params is empty
+        if not params_list:
+            super().__init__([], defaults)
+            return
+
+        # Detect if input is list of dicts (param groups) or tensors
+        if isinstance(params_list[0], dict):
+            input_groups = params_list
+        else:
+            input_groups = [{'params': params_list}]
+
+        for group in input_groups:
+            group_params = group['params']
+            # Group by size to match original behavior (though mostly for organization in single-GPU Muon)
+            # We must preserve other keys in 'group' (like specific lr)
+
+            # Find unique sizes
+            unique_sizes = {p.numel() for p in group_params}
+
+            for size in unique_sizes:
+                # Create a new group for this size, inheriting attributes from the input group
+                sub_group = {k: v for k, v in group.items() if k != 'params'}
+                sub_group['params'] = [p for p in group_params if p.numel() == size]
+                final_param_groups.append(sub_group)
+
+        super().__init__(final_param_groups, defaults)
 
     @torch.no_grad()
     def step(self):
@@ -107,21 +131,47 @@ class DistMuon(torch.optim.Optimizer):
     def __init__(self, params, lr: float = 0.02, momentum: float = 0.95,
                  nesterov: bool = True, ns_steps: int = 5):
         defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
-        params = list(params)
-        assert all(p.ndim == 2 for p in params), "Muon expects 2D parameters only"
+
+        params_list = list(params)
+        final_param_groups = []
+
+        if not params_list:
+            super().__init__([], defaults)
+            return
+
+        if isinstance(params_list[0], dict):
+            input_groups = params_list
+        else:
+            input_groups = [{'params': params_list}]
+
         rank = dist.get_rank()
-        # Group all parameters by their shape
-        shapes = sorted({p.shape for p in params}) # sort to ensure consistent / deterministic ordering
-        param_groups = []
-        for shape in shapes:
-            group_params = [p for p in params if p.shape == shape]
-            device, dtype = group_params[0].device, group_params[0].dtype
-            assert all(p.device == device for p in group_params)
-            assert all(p.dtype == dtype for p in group_params)
-            if rank == 0:
-                print(f"Muon: Grouping {len(group_params)} params of shape {shape}, device {device}, dtype {dtype}")
-            param_groups.append(dict(params=group_params, zero_buffer=torch.zeros_like(group_params[0])))
-        super().__init__(param_groups, defaults)
+
+        for group in input_groups:
+            group_params = group['params']
+            assert all(p.ndim == 2 for p in group_params), "Muon expects 2D parameters only"
+
+            # Group by shape (Required for DistMuon scatter/gather)
+            shapes = sorted({p.shape for p in group_params})
+
+            for shape in shapes:
+                sub_params = [p for p in group_params if p.shape == shape]
+
+                # Validation
+                device, dtype = sub_params[0].device, sub_params[0].dtype
+                assert all(p.device == device for p in sub_params)
+                assert all(p.dtype == dtype for p in sub_params)
+
+                if rank == 0:
+                    print(f"Muon: Grouping {len(sub_params)} params of shape {shape}, device {device}, dtype {dtype}")
+
+                # Inherit config
+                sub_group = {k: v for k, v in group.items() if k != 'params'}
+                sub_group['params'] = sub_params
+                sub_group['zero_buffer'] = torch.zeros_like(sub_params[0])
+
+                final_param_groups.append(sub_group)
+
+        super().__init__(final_param_groups, defaults)
 
     @torch.no_grad()
     def step(self):
