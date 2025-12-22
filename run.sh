@@ -137,7 +137,7 @@ if [ "$EXTRAS" == "amd" ]; then
     fi
 
     # LLD Path
-    ROCM_LLD_PATH=$(python -c "import sysconfig; import os; p = f\"{sysconfig.get_paths()['purelib']}/_rocm_sdk_core/lib/llvm/bin/ld.lld\"; print(p) if os.path.exists(p) else print('')"
+    ROCM_LLD_PATH=$(python -c "import sysconfig; import os; p = f\"{sysconfig.get_paths()['purelib']}/_rocm_sdk_core/lib/llvm/bin/ld.lld\"; print(p) if os.path.exists(p) else print('')")
     if [ -n "$ROCM_LLD_PATH" ]; then
         export TRITON_HIP_LLD_PATH=$ROCM_LLD_PATH
     fi
