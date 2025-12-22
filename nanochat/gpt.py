@@ -154,11 +154,7 @@ class GPTConfig:
     # up_proj -> c_fc (partially, c_fc is 4x expansion)
     # down_proj -> c_proj (mlp)
     lora_targets: List[str] = field(default_factory=lambda: ["q_proj", "v_proj"])
-
-
-def norm(x):
-    # Purely functional rmsnorm with no learnable params
-    return F.rms_norm(x, (x.size(-1),))
+    rmsnorm_affine: bool = False
 
 
 def apply_rotary_emb(x, cos, sin):
@@ -210,7 +206,7 @@ class CausalSelfAttention(nn.Module):
         # Apply Rotary Embeddings to queries and keys to get relative positional encoding
         cos, sin = cos_sin
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin) # QK rotary embedding
-        q, k = norm(q), norm(k) # QK norm
+        q, k = F.rms_norm(q, (q.size(-1),)), F.rms_norm(k, (k.size(-1),)) # QK norm
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2) # make head be batch dim, i.e. (B, T, H, D) -> (B, H, T, D)
 
         # Apply KV cache: insert current k,v into cache, get the full view so far
@@ -282,12 +278,14 @@ class MLP(nn.Module):
 class Block(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
+        self.ln1 = nn.RMSNorm(config.n_embd, elementwise_affine=config.rmsnorm_affine)
         self.attn = CausalSelfAttention(config, layer_idx)
+        self.ln2 = nn.RMSNorm(config.n_embd, elementwise_affine=config.rmsnorm_affine)
         self.mlp = MLP(config)
 
     def forward(self, x, cos_sin, kv_cache):
-        x = x + self.attn(norm(x), cos_sin, kv_cache)
-        x = x + self.mlp(norm(x))
+        x = x + self.attn(self.ln1(x), cos_sin, kv_cache)
+        x = x + self.mlp(self.ln2(x))
         return x
 
 
@@ -303,8 +301,10 @@ class GPT(nn.Module):
         self.transformer = nn.ModuleDict({
             "wte": nn.Embedding(total_vocab_size, config.n_embd),
             "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
+            "ln_pre": nn.RMSNorm(config.n_embd, elementwise_affine=config.rmsnorm_affine),
         })
         self.lm_head = nn.Linear(config.n_embd, total_vocab_size, bias=False)
+        self.ln_f = nn.RMSNorm(config.n_embd, elementwise_affine=config.rmsnorm_affine)
 
         # --- Multimodal Support ---
         if config.use_visual_tokens:
@@ -512,8 +512,19 @@ class GPT(nn.Module):
 
         # --- Standard Full Finetuning / Pretraining Setup (Existing Logic) ---
 
-        matrix_params = list(self.transformer.h.parameters())
+        matrix_params = []
         embedding_params = list(self.transformer.wte.parameters())
+        # Add ln_pre and ln_f params to embedding_params (general optimizer)
+        embedding_params.extend(list(self.transformer.ln_pre.parameters()))
+        embedding_params.extend(list(self.ln_f.parameters()))
+
+        # Separate block params into matrix (2D) and other (1D/bias)
+        for p in self.transformer.h.parameters():
+            if p.ndim == 2:
+                matrix_params.append(p)
+            else:
+                embedding_params.append(p)
+
         lm_head_params = list(self.lm_head.parameters())
 
         # Add Vision Params to Embedding Group
@@ -807,10 +818,10 @@ class GPT(nn.Module):
         cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
 
         # Forward the trunk of the Transformer
-        x = norm(x) # pre-norm for the concatenated sequence
+        x = self.transformer.ln_pre(x) # pre-norm for the concatenated sequence
         for block in self.transformer.h:
             x = block(x, cos_sin, kv_cache)
-        x = norm(x)
+        x = self.ln_f(x)
 
         # 3. Handle Robotics Outputs (Action Prediction)
         action_loss = 0.0
