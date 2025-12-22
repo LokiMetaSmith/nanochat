@@ -25,10 +25,14 @@ if torch.cuda.is_available() or (hasattr(torch.version, 'hip') and torch.version
     if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = True
 
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    # Allow overriding PYTORCH_CUDA_ALLOC_CONF/PYTORCH_HIP_ALLOC_CONF for tuning
+    if "PYTORCH_CUDA_ALLOC_CONF" not in os.environ:
+        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
     # Also set the HIP-specific env var if on ROCm, as suggested by OOM errors
     if hasattr(torch.version, 'hip') and torch.version.hip:
-        os.environ["PYTORCH_HIP_ALLOC_CONF"] = "expandable_segments:True"
+        if "PYTORCH_HIP_ALLOC_CONF" not in os.environ:
+             os.environ["PYTORCH_HIP_ALLOC_CONF"] = "expandable_segments:True"
 
         # Check for Strix Halo (gfx1151) and enable experimental features
         try:
@@ -208,6 +212,11 @@ print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {
 num_vision_patches = 0
 if use_vision:
     num_vision_patches = (vision_image_size // vision_patch_size) ** 2
+elif user_config.get("use_visual_tokens", False):
+    # UniTok downsample factor is 16 (2*2*2*2)
+    # Grid size = (224 // 16) * (224 // 16) = 14 * 14 = 196
+    # Or should we use vision_image_size from config? Yes.
+    num_vision_patches = (vision_image_size // 16) ** 2
 
 num_robotics_tokens = 0
 if use_robotics:
@@ -322,7 +331,7 @@ dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_s
 
 # Vision Config for Dataloader
 vision_loader_config = None
-if use_vision:
+if use_vision or user_config.get("use_visual_tokens", False):
     vision_loader_config = {
         'image_size': vision_image_size,
         'channels': 3 # assume RGB
@@ -375,7 +384,7 @@ if use_robotics:
     # or implement next-step in dataloader later.
     action_targets = surface
 
-elif use_vision:
+elif use_vision or user_config.get("use_visual_tokens", False):
     x, y, images, dataloader_state_dict = batch_data
 else:
     x, y, dataloader_state_dict = batch_data
@@ -540,7 +549,7 @@ while True:
         if use_robotics:
             x, y, images, sensors, surface, dataloader_state_dict = batch_data
             action_targets = surface
-        elif use_vision:
+        elif use_vision or user_config.get("use_visual_tokens", False):
             x, y, images, dataloader_state_dict = batch_data
         else:
             x, y, dataloader_state_dict = batch_data

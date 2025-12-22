@@ -488,13 +488,48 @@ def main():
             compile_dynamic_options = [False, True]
 
         # Environment variable combinations
-        env_configs = [{}]
+        # We start with basic flags.
+        # We also want to test PYTORCH_CUDA_ALLOC_CONF for memory optimization if desired or necessary.
+        # Especially relevant for 24GB GPUs (RTX 3090) as per report.
+        base_env_configs = [{}]
+
+        # Test expandable_segments explicitly if not already in env
+        # If we are on CUDA or ROCm
+        if is_rocm or torch.cuda.is_available():
+            base_env_configs = [
+                {}, # Default (typically expandable_segments:True in base_train unless overridden)
+                {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:False"}, # Disable
+                {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"},  # Force Enable
+            ]
+            if is_rocm:
+                # Also test HIP var
+                 base_env_configs.extend([
+                     {"PYTORCH_HIP_ALLOC_CONF": "expandable_segments:False"},
+                     {"PYTORCH_HIP_ALLOC_CONF": "expandable_segments:True"},
+                 ])
+
+        env_configs = base_env_configs
+
         if is_rocm:
-            # Tuning ROCm specific flags
-            env_configs = [
+            # Tuning ROCm specific flags (combine with memory configs)
+            # This cartesian product might be too big. Let's keep it simple for now and prioritize memory configs
+            # Or we can just add the experimental flag to the best memory config later?
+            # For now, let's just stick to the previous experimental flag toggle on top of default memory
+
+            # Actually, let's mix them.
+            rocm_configs = [
                 {"TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "0"},
                 {"TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "1"}
             ]
+
+            # Cartesian product of base_env (memory) and rocm_configs (triton)
+            new_configs = []
+            for base in base_env_configs:
+                for rocm in rocm_configs:
+                    merged = base.copy()
+                    merged.update(rocm)
+                    new_configs.append(merged)
+            env_configs = new_configs
 
         # Grid search for Throughput
         print("\nPhase 1: Throughput Tuning (Batch Size & Compilation)", flush=True)
@@ -604,9 +639,11 @@ def main():
     if args.tune_lr:
         print("\nPhase 2: Learning Rate & Decay Tuning", flush=True)
         # Define search space
-        # We will tune matrix_lr (Muon) and embedding_lr (Adam) and layer_lr_decay
+        # We will tune matrix_lr (Muon), embedding_lr (Adam), layer_lr_decay and unembedding_lr
+        # Center around defaults or current values
         base_matrix_lr = float(final_config.get("matrix_lr", 0.02))
         base_embed_lr = float(final_config.get("embedding_lr", 0.2))
+        base_unembed_lr = float(final_config.get("unembedding_lr", 0.004))
 
         # Grid: 0.5x, 1.0x, 2.0x for LRs
         lr_multipliers = [0.5, 1.0, 2.0]
@@ -617,17 +654,21 @@ def main():
         best_loss = float("inf")
         best_lr_config = {}
 
-        lr_combinations = list(itertools.product(lr_multipliers, lr_multipliers, decays))
+        # 3D Grid Search
+        import itertools
+        lr_combinations = list(itertools.product(lr_multipliers, lr_multipliers, lr_multipliers, decays))
 
-        for m_mult, e_mult, decay in lr_combinations:
+        for m_mult, e_mult, u_mult, decay in lr_combinations:
             m_lr = base_matrix_lr * m_mult
             e_lr = base_embed_lr * e_mult
+            u_lr = base_unembed_lr * u_mult
 
             # Skip redundant 1.0 decay checks if we already did them (but combination with LR changes matters)
 
             overrides = final_config.copy()
             overrides["matrix_lr"] = m_lr
             overrides["embedding_lr"] = e_lr
+            overrides["unembedding_lr"] = u_lr
             overrides["layer_lr_decay"] = decay
 
             # Use the best env from throughput tuning
@@ -642,41 +683,86 @@ def main():
 
             if loss < best_loss:
                 best_loss = loss
-                best_lr_config = {"matrix_lr": m_lr, "embedding_lr": e_lr, "layer_lr_decay": decay}
+                best_lr_config = {"matrix_lr": m_lr, "embedding_lr": e_lr, "unembedding_lr": u_lr, "layer_lr_decay": decay}
 
         if best_lr_config:
             print(f"Found better LRs: {best_lr_config} with loss {best_loss:.4f}")
             final_config.update(best_lr_config)
 
-    # Tuning schedule parameters (warmup_ratio)
+    # Tuning schedule parameters
     if args.tune_lr: # Include schedule tuning with LR tuning
-        print("\nPhase 2.5: Schedule Tuning (warmup_ratio)", flush=True)
+        print("\nPhase 2.5: Schedule Tuning", flush=True)
+
+        # 1. Warmup
         base_warmup = float(final_config.get("warmup_ratio", 0.0))
-        warmups = [0.0, 0.05, 0.1]
+        base_adam_warmup = float(final_config.get("adam_warmup_ratio", 0.0))
+        warmups = [0.0, 0.01, 0.05] # Keep it small for efficiency
 
+        # 2. Warmdown/Decay
+        base_warmdown = float(final_config.get("warmdown_ratio", 0.2))
+        base_final_frac = float(final_config.get("final_lr_frac", 0.0))
+        warmdowns = [0.0, 0.2, 0.4]
+        final_fracs = [0.0, 0.1]
+
+        best_sched_loss = float("inf")
+        best_sched_config = {}
+
+        # We do a grid search here too, but maybe smaller?
+        # Let's try to tune them somewhat independently or in small groups to avoid explosion.
+        # Group 1: Warmups
+        # Group 2: Decays
+
+        # Tune Warmups
+        print("  -> Tuning Warmup Ratios...", flush=True)
         best_warmup_loss = float("inf")
-        best_warmup_config = {}
-
+        local_best_warmups = {}
         for w in warmups:
-            overrides = final_config.copy()
-            overrides["warmup_ratio"] = w
+            for aw in warmups:
+                overrides = final_config.copy()
+                overrides["warmup_ratio"] = w
+                overrides["adam_warmup_ratio"] = aw
 
-            loss = run_loss_benchmark(
-                overrides,
-                best_env,
-                base_config_path=args.config,
-                base_config=base_config,
-                extra_args=unknown,
-                steps=args.max_benchmark_steps
-            )
+                loss = run_loss_benchmark(
+                    overrides,
+                    best_env,
+                    base_config_path=args.config,
+                    base_config=base_config,
+                    extra_args=unknown,
+                    steps=args.max_benchmark_steps
+                )
+                if loss < best_warmup_loss:
+                    best_warmup_loss = loss
+                    local_best_warmups = {"warmup_ratio": w, "adam_warmup_ratio": aw}
 
-            if loss < best_warmup_loss:
-                best_warmup_loss = loss
-                best_warmup_config = {"warmup_ratio": w}
+        if local_best_warmups:
+             print(f"  -> Found better warmups: {local_best_warmups}", flush=True)
+             final_config.update(local_best_warmups)
 
-        if best_warmup_config:
-             print(f"Found better warmup_ratio: {best_warmup_config} with loss {best_warmup_loss:.4f}")
-             final_config.update(best_warmup_config)
+        # Tune Decays
+        print("  -> Tuning Decay/Warmdown...", flush=True)
+        best_decay_loss = float("inf")
+        local_best_decays = {}
+        for wd in warmdowns:
+            for ff in final_fracs:
+                overrides = final_config.copy()
+                overrides["warmdown_ratio"] = wd
+                overrides["final_lr_frac"] = ff
+
+                loss = run_loss_benchmark(
+                    overrides,
+                    best_env,
+                    base_config_path=args.config,
+                    base_config=base_config,
+                    extra_args=unknown,
+                    steps=50
+                )
+                if loss < best_decay_loss:
+                    best_decay_loss = loss
+                    local_best_decays = {"warmdown_ratio": wd, "final_lr_frac": ff}
+
+        if local_best_decays:
+             print(f"  -> Found better decays: {local_best_decays}", flush=True)
+             final_config.update(local_best_decays)
 
     if args.tune_optimizer:
         print("\nPhase 3: Optimizer Tuning", flush=True)
@@ -684,28 +770,35 @@ def main():
         best_loss = float("inf")
         best_opt_config = {}
 
-        # 3a. Weight Decay
+        # 3a. Weight Decay & Gradient Clipping
+        print("  -> Tuning Weight Decay and Gradient Clipping...", flush=True)
         base_wd = float(final_config.get("weight_decay", 0.0))
         wds = [0.0, 0.01, 0.1]
 
+        base_clip = float(final_config.get("grad_clip", 1.0))
+        clips = [0.0, 1.0, 2.0]
+
         for wd in wds:
-            overrides = final_config.copy()
-            overrides["weight_decay"] = wd
+            for clip in clips:
+                overrides = final_config.copy()
+                overrides["weight_decay"] = wd
+                overrides["grad_clip"] = clip
 
-            loss = run_loss_benchmark(
-                overrides,
-                best_env,
-                base_config_path=args.config,
-                base_config=base_config,
-                extra_args=unknown,
-                steps=args.max_benchmark_steps
-            )
+                loss = run_loss_benchmark(
+                    overrides,
+                    best_env,
+                    base_config_path=args.config,
+                    base_config=base_config,
+                    extra_args=unknown,
+                    steps=args.max_benchmark_steps
+                )
 
-            if loss < best_loss:
-                best_loss = loss
-                best_opt_config = {"weight_decay": wd}
+                if loss < best_loss:
+                    best_loss = loss
+                    best_opt_config = {"weight_decay": wd, "grad_clip": clip}
 
         if best_opt_config:
+            print(f"  -> Found better decay/clip: {best_opt_config}", flush=True)
             final_config.update(best_opt_config)
             best_loss = float("inf") # Reset for next phase? Or keep cumulative?
                                      # Actually, we should probably keep improving `final_config` incrementally.
