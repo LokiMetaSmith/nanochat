@@ -29,11 +29,13 @@ class TestWorkflow(unittest.TestCase):
         mock_setup_tok.assert_called_once()
         # Check dataset download
         mock_bg.assert_called()
-        # Check torchrun calls
-        # We expect calls to base_train, base_loss, base_eval, etc.
-        # Just check a few signatures
 
         calls = [str(call) for call in mock_run.mock_calls]
+
+        # Check report reset
+        self.assertTrue(any("nanochat.report" in c and "reset" in c for c in calls))
+
+        # Check torchrun calls
         self.assertTrue(any("scripts.base_train" in c and "configs/tiny.json" in c for c in calls))
         self.assertTrue(any("scripts.base_eval" in c and "--max-per-task=16" in c for c in calls))
 

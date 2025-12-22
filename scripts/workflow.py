@@ -81,6 +81,9 @@ def main():
 
     wandb_run = os.environ.get("WANDB_RUN", "dummy")
 
+    # Reset Report
+    run_command([sys.executable, "-m", "nanochat.report", "reset"])
+
     # Configuration selection
     if args.job == "tiny":
         config_file = "configs/tiny.json"
