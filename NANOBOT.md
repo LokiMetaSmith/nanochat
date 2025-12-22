@@ -34,10 +34,10 @@ Use `scripts/collect_telemetry.py` to bridge the robot (via Serial or Mock) to t
 
 ```bash
 # Start Data Collector (Mock Mode)
-bash run.sh scripts/collect_telemetry.py --mock --data_dir data/live_telemetry
+python scripts/collect_telemetry.py --mock --data_dir data/live_telemetry
 
 # Start Data Collector (Real Robot)
-# bash run.sh scripts/collect_telemetry.py --port /dev/ttyUSB0 --baud 115200 --data_dir data/live_telemetry
+# python scripts/collect_telemetry.py --port /dev/ttyUSB0 --baud 115200 --data_dir data/live_telemetry
 ```
 
 ### 2. Online Training
@@ -48,7 +48,7 @@ Run the training script with the `--continual=True` flag. The dataloader will mo
 export NANOCHAT_BASE_DIR=data/live_telemetry
 
 # Start Online Training
-bash run.sh -m scripts.base_train \
+python -m scripts.base_train \
     --use_robotics=True \
     --continual=True \
     --robotics_use_diffusion=True \
@@ -88,7 +88,7 @@ The `GPTConfig` has been extended with:
 
 **Example Command:**
 ```bash
-bash run.sh -m scripts.base_train \
+python -m scripts.base_train \
     --use_vision=True \
     --use_robotics=True \
     --robotics_use_diffusion=True \
@@ -101,7 +101,7 @@ bash run.sh -m scripts.base_train \
 To move from Python training to Rust inference, export your checkpoint:
 
 ```bash
-bash run.sh scripts/export_model.py \
+python scripts/export_model.py \
     --checkpoint_dir base_checkpoints/d12 \
     --format safetensors
 ```
