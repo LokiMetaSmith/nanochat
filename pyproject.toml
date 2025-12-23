@@ -56,20 +56,27 @@ python_functions = ["test_*"]
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu128", extra = "gpu" },
-    { index = "pytorch-rocm", extra = "amd" },
+    { index = "pytorch-rocm-gfx120x", extra = "gfx120x" },
+    { index = "pytorch-rocm-gfx1151", extra = "gfx1151" },
 ]
 
 rocm = [
-    { index = "pytorch-rocm", extra = "amd" },
+    { index = "pytorch-rocm-gfx120x", extra = "gfx120x" },
+    { index = "pytorch-rocm-gfx1151", extra = "gfx1151" },
 ]
 pytorch-triton-rocm = [
-    { index = "pytorch-rocm", extra = "amd" },
+    { index = "pytorch-rocm-gfx120x", extra = "gfx120x" },
+    { index = "pytorch-rocm-gfx1151", extra = "gfx1151" },
 ]
 rocm-sdk-core = [
-    { index = "pytorch-rocm", extra = "amd" },
+    { index = "pytorch-rocm-gfx120x", extra = "gfx120x" },
+    { index = "pytorch-rocm-gfx1151", extra = "gfx1151" },
 ]
 rocm-sdk-libraries-gfx1151 = [
-    { index = "pytorch-rocm", extra = "amd" },
+    { index = "pytorch-rocm-gfx1151", extra = "gfx1151" },
+]
+rocm-sdk-libraries-gfx120x-all = [
+    { index = "pytorch-rocm-gfx120x", extra = "gfx120x" },
 ]
 
 
@@ -84,7 +91,12 @@ url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [[tool.uv.index]]
-name = "pytorch-rocm"
+name = "pytorch-rocm-gfx120x"
+url = "https://repo.amd.com/rocm/whl/gfx120X-all"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm-gfx1151"
 url = "https://repo.amd.com/rocm/whl/gfx1151"
 explicit = true
 
@@ -95,7 +107,14 @@ cpu = [
 gpu = [
     "torch>=2.7.0,<2.9.0",
 ]
-amd = [
+gfx120x = [
+    "torch>=2.7.0,<2.9.0",
+    "rocm",
+    "pytorch-triton-rocm",
+    "rocm-sdk-core",
+    "rocm-sdk-libraries-gfx120x-all",
+]
+gfx1151 = [
     "torch>=2.7.0,<2.9.0",
     "rocm",
     "pytorch-triton-rocm",
@@ -109,6 +128,7 @@ conflicts = [
     [
         { extra = "cpu" },
         { extra = "gpu" },
-        { extra = "amd" },
+        { extra = "gfx120x" },
+        { extra = "gfx1151" },
     ],
 ]
