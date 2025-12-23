@@ -12,7 +12,6 @@ Architecture:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import lpips
 
 class ResBlock(nn.Module):
     def __init__(self, in_channels, out_channels=None):
@@ -200,6 +199,7 @@ class VQLoss(nn.Module):
         self.disc_weight = disc_weight
         self.perceptual_weight = perceptual_weight
 
+        import lpips
         self.perceptual_loss = lpips.LPIPS(net='vgg').eval()
         # Freezing LPIPS
         for p in self.perceptual_loss.parameters():
