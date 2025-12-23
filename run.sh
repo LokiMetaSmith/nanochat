@@ -26,20 +26,37 @@ fi
 # -----------------------------------------------------------------------------
 # Environment Setup
 
-# Detect hardware
-# Logic shared between uv and deploy modes to select extras
-if command -v nvidia-smi &> /dev/null; then
-    EXTRAS="gpu"
-elif command -v rocminfo &> /dev/null; then
-    EXTRAS="amd"
-else
-    # Double check if rocminfo is present in venv but not in PATH yet (only relevant for uv mode really, but good to check)
-    if [ -f ".venv/bin/rocminfo" ]; then
-         EXTRAS="amd"
+# Function to detect hardware
+detect_hardware() {
+    if command -v nvidia-smi &> /dev/null; then
+        echo "gpu"
+    elif command -v rocminfo &> /dev/null; then
+        # Check specific AMD architectures
+        # Use simple grep, assuming one dominant GPU
+        if rocminfo | grep -q "gfx1151"; then
+            echo "gfx1151"
+        elif rocminfo | grep -q "gfx120"; then
+            echo "gfx120x"
+        else
+            # Default fallback for unknown AMD
+            # Or should we fail? For now, default to gfx1151 as that's what 'amd' was
+            echo "gfx1151"
+        fi
+    elif [ -f ".venv/bin/rocminfo" ]; then
+         # Similar check if inside venv but not in PATH
+         if .venv/bin/rocminfo | grep -q "gfx1151"; then
+            echo "gfx1151"
+         elif .venv/bin/rocminfo | grep -q "gfx120"; then
+            echo "gfx120x"
+         else
+            echo "gfx1151"
+         fi
     else
-         EXTRAS="cpu"
+        echo "cpu"
     fi
-fi
+}
+
+EXTRAS=$(detect_hardware)
 
 if [ "$DEPLOY" -eq 1 ]; then
     echo "Deploy mode: Skipping uv/venv setup..."
@@ -49,7 +66,7 @@ if [ "$DEPLOY" -eq 1 ]; then
     echo "Installing project with extra: $EXTRAS"
     # Install in editable mode or standard? Using '.' usually implies editable if -e, but just . installs it.
     # The snippet used `pip install pyproject.toml` which implies installing the project defined there.
-    # We use `.[amd]`, `.[gpu]`, etc.
+    # We use `.[gfx1151]`, `.[gpu]`, etc.
     pip install ".[$EXTRAS]"
 
     # 2. Rust Setup
@@ -87,13 +104,7 @@ else
 
     # Refine Hardware Detection with uv environment
     # Rerun detection logic in case rocminfo appeared in venv
-    if command -v nvidia-smi &> /dev/null; then
-        EXTRAS="gpu"
-    elif command -v rocminfo &> /dev/null; then
-        EXTRAS="amd"
-    else
-        EXTRAS="cpu"
-    fi
+    EXTRAS=$(detect_hardware)
 
     # Sync dependencies
     uv sync --extra $EXTRAS > /dev/null 2>&1 || uv sync --extra $EXTRAS
@@ -108,7 +119,7 @@ fi
 # -----------------------------------------------------------------------------
 # Shared Hardware Config (AMD Specifics)
 
-if [ "$EXTRAS" == "amd" ]; then
+if [[ "$EXTRAS" == gfx* ]]; then
     # Get ROCm path from the installed package
     ROCM_PATH_SCRIPT="import sysconfig, os; p = f\"{sysconfig.get_paths()['purelib']}/_rocm_sdk_core\"; print(p) if os.path.exists(p) else print('')"
     ROCM_PATH=$(python -c "$ROCM_PATH_SCRIPT")
@@ -123,10 +134,10 @@ if [ "$EXTRAS" == "amd" ]; then
     if [ "$DEPLOY" -eq 0 ]; then
         if uv pip show triton > /dev/null 2>&1; then
             uv pip uninstall -q triton
-            uv sync --extra amd > /dev/null 2>&1
+            uv sync --extra $EXTRAS > /dev/null 2>&1
         fi
         if ! uv pip show pytorch-triton-rocm > /dev/null 2>&1; then
-            uv sync --extra amd > /dev/null 2>&1
+            uv sync --extra $EXTRAS > /dev/null 2>&1
         fi
     else
         # In deploy mode, we might need to manually handle this if pip installs standard triton?
@@ -142,15 +153,8 @@ if [ "$EXTRAS" == "amd" ]; then
         export TRITON_HIP_LLD_PATH=$ROCM_LLD_PATH
     fi
 
-    # Strix Halo
-    IS_STRIX_HALO=0
-    if command -v rocminfo &> /dev/null; then
-        if rocminfo | grep -q "gfx1151"; then
-            IS_STRIX_HALO=1
-        fi
-    fi
-
-    if [ "$IS_STRIX_HALO" -eq 1 ]; then
+    # Strix Halo Specifics
+    if [ "$EXTRAS" == "gfx1151" ]; then
         [ -z "$HSA_OVERRIDE_GFX_VERSION" ] && export HSA_OVERRIDE_GFX_VERSION=11.5.1
         export HSA_ENABLE_SDMA=0
     fi
