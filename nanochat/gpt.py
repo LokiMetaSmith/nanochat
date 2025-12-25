@@ -633,6 +633,9 @@ class GPT(nn.Module):
 
         # Get Text Embeddings
         x = self.transformer.wte(idx)
+        # Clone the embeddings to prevent CUDAGraphs overwrite issues during backward
+        # when using torch.compile(mode='reduce-overhead')
+        x = x.clone()
 
         # 1. Handle Vision
         if self.config.use_visual_tokens and images is not None:
