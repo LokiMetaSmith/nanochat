@@ -150,6 +150,11 @@ try:
             # We no longer disable compile=True.
             # Instead we want to ensure experimental features and 8-bit optimizer if appropriate
             # (though 8-bit optimizer is opt-in via flag)
+
+            # CUDAGraphs (reduce-overhead) has issues with tensor overwrites on this platform
+            if compile_mode == "reduce-overhead":
+                 print("Downgrading compile_mode to 'default' for stability on Strix Halo.")
+                 compile_mode = "default"
 except Exception:
     pass
 
