@@ -876,12 +876,7 @@ class GPT(nn.Module):
             action_loss = self.robotics_interface.predict_action(last_hidden_state, target_action=action_targets)
             action_loss = action_loss * self.config.robotics_action_loss_weight
 
-        # Forward the lm_head (compute logits)
         softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
-        logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
-        logits = logits[..., :self.config.vocab_size] # slice to remove padding
-        logits = logits.float() # switch to fp32 for logit softcap and loss computation
-        logits = softcap * torch.tanh(logits / softcap) # squash the logits
 
         if targets is not None:
             # training mode: compute and return the loss
@@ -903,8 +898,11 @@ class GPT(nn.Module):
             return total_loss.clone()
         else:
             # inference: return logits AND action_pred if robotics enabled
-            logits = self.lm_head(x)
-            logits = softcap * torch.tanh(logits / softcap)
+            # Forward the lm_head (compute logits)
+            logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
+            logits = logits[..., :self.config.vocab_size] # slice to remove padding
+            logits = logits.float() # switch to fp32 for logit softcap and loss computation
+            logits = softcap * torch.tanh(logits / softcap) # squash the logits
 
             action_pred = None
             if self.config.use_robotics and self.robotics_interface is not None:

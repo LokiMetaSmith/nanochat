@@ -38,9 +38,14 @@ if torch.cuda.is_available() or (hasattr(torch.version, 'hip') and torch.version
         try:
             if shutil.which('rocminfo'):
                 result = subprocess.run(['rocminfo'], capture_output=True, text=True)
-                if 'gfx1151' in result.stdout and "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL" not in os.environ:
-                    print("AMD Strix Halo (gfx1151) detected. Enabling experimental Triton support.")
-                    os.environ["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"] = "1"
+                if 'gfx1151' in result.stdout:
+                    if "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL" not in os.environ:
+                        print("AMD Strix Halo (gfx1151) detected. Enabling experimental Triton support.")
+                        os.environ["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"] = "1"
+                    # Disable HIPBLASLT to avoid 'HIPBLAS_STATUS_NOT_SUPPORTED' warnings/fallbacks
+                    if "TORCH_BLAS_PREFER_HIPBLASLT" not in os.environ:
+                        print("Disabling HIPBLASLT for Strix Halo stability.")
+                        os.environ["TORCH_BLAS_PREFER_HIPBLASLT"] = "0"
         except Exception:
             pass
 
