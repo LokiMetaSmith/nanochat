@@ -628,14 +628,21 @@ class GPT(nn.Module):
                 group["initial_lr"] = group["lr"]
         return optimizers
 
+    @torch.compiler.disable
+    def _safe_embed(self, idx):
+        """
+        Perform embedding lookup in eager mode to avoid CUDAGraph static buffer overwrites.
+        Returns a fresh tensor that serves as a clean input to the compiled graph.
+        """
+        x = self.transformer.wte(idx)
+        return x.clone()
+
     def forward(self, idx, images=None, sensors=None, surface=None, targets=None, action_targets=None, kv_cache=None, loss_reduction='mean', return_embeddings=False):
         B, T = idx.size()
 
         # Get Text Embeddings
-        x = self.transformer.wte(idx)
-        # Clone the embeddings to prevent CUDAGraphs overwrite issues during backward
-        # when using torch.compile(mode='reduce-overhead')
-        x = x.clone()
+        # We use a graph-break wrapper to ensure the embedding output is safe for CUDAGraphs
+        x = self._safe_embed(idx)
 
         # 1. Handle Vision
         if self.config.use_visual_tokens and images is not None:
