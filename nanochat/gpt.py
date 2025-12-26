@@ -886,7 +886,8 @@ class GPT(nn.Module):
                 # We clone x to ensure it doesn't share memory with internal buffers (like wte output)
                 # which can cause CUDAGraph overwrites during backward.
                 return total_loss.clone(), x.clone()
-            return total_loss
+            # Always clone the loss to prevent CUDAGraph memory overwrite issues during backward
+            return total_loss.clone()
         else:
             # inference: return logits AND action_pred if robotics enabled
             logits = self.lm_head(x)

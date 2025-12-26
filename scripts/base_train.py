@@ -176,6 +176,10 @@ if device.type == 'cpu' and compile_mode == 'reduce-overhead':
     print0("WARNING: 'reduce-overhead' compile mode is not compatible with CPU. Switching to 'default'.")
     compile_mode = 'default'
 
+# Check for CUDAGraphs support
+if compile_mode == 'reduce-overhead' and not hasattr(torch.compiler, "cudagraph_mark_step_begin"):
+    print0("WARNING: 'reduce-overhead' requested but 'torch.compiler.cudagraph_mark_step_begin' is missing. This may cause RuntimeErrors with CUDAGraphs.")
+
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
 autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
