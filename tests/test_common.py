@@ -20,16 +20,18 @@ def test_autodetect_device_type_cuda(mock_mps, mock_cuda):
 @patch("torch.cuda.is_available")
 @patch("torch.backends.mps.is_available")
 def test_autodetect_device_type_mps(mock_mps, mock_cuda):
-    mock_cuda.return_value = False
-    mock_mps.return_value = True
-    assert autodetect_device_type() == "mps"
+    with patch("torch.version.hip", None):
+        mock_cuda.return_value = False
+        mock_mps.return_value = True
+        assert autodetect_device_type() == "mps"
 
 @patch("torch.cuda.is_available")
 @patch("torch.backends.mps.is_available")
 def test_autodetect_device_type_cpu(mock_mps, mock_cuda):
-    mock_cuda.return_value = False
-    mock_mps.return_value = False
-    assert autodetect_device_type() == "cpu"
+    with patch("torch.version.hip", None):
+        mock_cuda.return_value = False
+        mock_mps.return_value = False
+        assert autodetect_device_type() == "cpu"
 
 def test_is_ddp_false():
     with patch.dict(os.environ, {}, clear=True):

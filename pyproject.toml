@@ -79,10 +79,10 @@ rocm-sdk-core = [
     { index = "pytorch-rocm-gfx1151", extra = "gfx1151" },
 ]
 rocm-sdk-libraries-gfx1151 = [
-    { index = "pytorch-rocm-gfx1151", extra = "gfx1151" },
+    { index = "pytorch-rocm-gfx1151" },
 ]
 rocm-sdk-libraries-gfx120x-all = [
-    { index = "pytorch-rocm-gfx120x", extra = "gfx120x" },
+    { index = "pytorch-rocm-gfx120x" },
 ]
 
 
@@ -108,15 +108,15 @@ explicit = true
 
 [project.optional-dependencies]
 cpu = [
-    "torch>=2.7.0,<2.9.0",
+    "torch>=2.9.1,<2.10.0",
     "torchvision",
 ]
 gpu = [
-    "torch>=2.7.0,<2.9.0",
+    "torch>=2.9.1,<2.10.0",
     "torchvision",
 ]
 gfx120x = [
-    "torch>=2.7.0,<2.9.0",
+    "torch>=2.9.1,<2.10.0",
     "torchvision",
     "rocm",
     "pytorch-triton-rocm",
@@ -124,7 +124,7 @@ gfx120x = [
     "rocm-sdk-libraries-gfx120x-all",
 ]
 gfx1151 = [
-    "torch>=2.7.0,<2.9.0",
+    "torch>=2.9.1,<2.10.0",
     "torchvision",
     "rocm",
     "pytorch-triton-rocm",
