@@ -43,6 +43,7 @@ def _compute_loss_chunk(x_chunk, targets_chunk, lm_head, softcap, ignore_index, 
     logits_chunk = softcap * torch.tanh(logits_chunk / softcap)
     return F.cross_entropy(logits_chunk, targets_chunk, ignore_index=ignore_index, reduction=reduction)
 
+@torch.compiler.disable
 def chunked_cross_entropy(x, targets, lm_head, chunk_size=128, softcap=15.0, ignore_index=-1, reduction='mean'):
     # Flatten input and targets
     B, T, C = x.size()
@@ -65,8 +66,7 @@ def chunked_cross_entropy(x, targets, lm_head, chunk_size=128, softcap=15.0, ign
         # We use checkpointing to save memory for the backward pass
         # The checkpoint wrapper seems to have issues with torch.compile when loss_reduction is 'none'.
         # So we only apply it when it's safe and needed (i.e. training with mean/sum reduction).
-        # TEST: Disabling checkpointing to debug CUDAGraphs overwrite error on Strix Halo
-        if False and torch.is_grad_enabled() and reduction != 'none':
+        if torch.is_grad_enabled() and reduction != 'none':
             loss_chunk = checkpoint(
                 _compute_loss_chunk,
                 x_chunk,
