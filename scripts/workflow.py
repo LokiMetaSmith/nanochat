@@ -70,6 +70,7 @@ def main():
     parser.add_argument("--tune-lr", action="store_true", help="Enable LR tuning")
     parser.add_argument("--tune-hyperparams", action="store_true", help="Enable hyperparameter tuning")
     parser.add_argument("--try-all-variations", action="store_true", help="Try all tuning variations")
+    parser.add_argument("--skip-workarounds", action="store_true", help="Skip stability workarounds to test driver fixes")
 
     args, unknown_args = parser.parse_known_args()
 
@@ -102,8 +103,29 @@ def main():
     bg_download_proc = download_dataset_background(args.job)
 
     # System Tuning
+    if args.skip_workarounds:
+        tuner_args.append("--skip-workarounds")
+        # Explicitly set it in the current environment to ensure it persists
+        # even if something goes wrong with loading run_config.json
+        print("Enabling NANOCHAT_SKIP_WORKAROUNDS=1 globally.")
+        os.environ["NANOCHAT_SKIP_WORKAROUNDS"] = "1"
+
     if tuner_args:
         config_file = tune_system(config_file, tuner_args)
+
+    # Load environment variables from run_config.json if it exists and we used it
+    # We check basename to handle paths like ./run_config.json
+    if os.path.basename(config_file) == "run_config.json" and os.path.exists(config_file):
+        try:
+            with open(config_file) as f:
+                data = json.load(f)
+                if "env_vars" in data and isinstance(data["env_vars"], dict):
+                    print(f"Loading environment variables from {config_file}...")
+                    for k, v in data["env_vars"].items():
+                        print(f"  Setting {k}={v}")
+                        os.environ[k] = str(v)
+        except Exception as e:
+            print(f"Warning: Failed to load env_vars from {config_file}: {e}")
 
     # Wait for download if needed? The original scripts just let it run.
     # But wait, original script: `wait $DATASET_DOWNLOAD_PID` right after tok_eval.
