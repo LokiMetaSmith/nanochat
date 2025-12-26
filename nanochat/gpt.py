@@ -291,11 +291,16 @@ class Block(nn.Module):
 
 
 class GPT(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, pad_vocab_size_to=64):
         super().__init__()
         self.config = config
         # Adjust vocab size if using visual tokens
-        total_vocab_size = config.vocab_size
+        # For DDP, we want vocab_size divisible by world_size. Also, there are potential performance benefits, see:
+        # https://huggingface.co/docs/transformers/main_classes/model#transformers.PreTrainedModel.resize_token_embeddings
+        padded_vocab_size = ((config.vocab_size + pad_vocab_size_to - 1) // pad_vocab_size_to) * pad_vocab_size_to
+        if padded_vocab_size != config.vocab_size:
+            print0(f"Padding vocab_size from {config.vocab_size} to {padded_vocab_size} to be divisible by {pad_vocab_size_to}")
+        total_vocab_size = padded_vocab_size
         if config.use_visual_tokens:
             total_vocab_size += config.visual_vocab_size
 
@@ -871,7 +876,12 @@ class GPT(nn.Module):
             action_loss = action_loss * self.config.robotics_action_loss_weight
 
         # Forward the lm_head (compute logits)
-        softcap = 15.0
+        softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
+        logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
+        logits = logits[..., :self.config.vocab_size] # slice to remove padding
+        logits = logits.float() # switch to fp32 for logit softcap and loss computation
+        logits = softcap * torch.tanh(logits / softcap) # squash the logits
+
         if targets is not None:
             # training mode: compute and return the loss
             # NOTE: Targets must match the total sequence length (Vision + Robot + Text)
