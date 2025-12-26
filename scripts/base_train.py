@@ -142,20 +142,19 @@ use_infovore = False # Enable Novelty-Relation Quotient curriculum
 infovore_beta = 0.99 # Momentum for memory manifold
 
 # Auto-detect Strix Halo to enable specific optimizations
+is_strix_halo = False
 try:
     if shutil.which('rocminfo'):
         _res = subprocess.run(['rocminfo'], capture_output=True, text=True)
         if 'gfx1151' in _res.stdout:
             print("AMD Strix Halo (gfx1151) detected. Optimizing for APU.")
+            is_strix_halo = True
             # We no longer disable compile=True.
             # Instead we want to ensure experimental features and 8-bit optimizer if appropriate
             # (though 8-bit optimizer is opt-in via flag)
 
             # CUDAGraphs (reduce-overhead) has issues with tensor overwrites on this platform
-            # We implemented a fix in GPT.forward (graph break at embedding), so we can try to keep it enabled.
-            # if compile_mode == "reduce-overhead":
-            #      print("Downgrading compile_mode to 'default' for stability on Strix Halo.")
-            #      compile_mode = "default"
+            # The fix in GPT.forward (graph break at embedding) was insufficient.
 except Exception:
     pass
 
@@ -164,6 +163,15 @@ config_keys = {k: v for k,v in globals().items() if not k.startswith('_') and is
 from nanochat.configurator import get_config
 config_updates = get_config(config_keys)
 globals().update(config_updates)
+
+# Re-apply Strix Halo stability fix AFTER config load
+if is_strix_halo and compile_mode == "reduce-overhead":
+    # Allow advanced users to skip this workaround if they have a fixed driver
+    if os.environ.get("NANOCHAT_SKIP_WORKAROUNDS") != "1":
+        print("Downgrading compile_mode to 'default' for stability on Strix Halo.")
+        print("To override this and use reduce-overhead (e.g. if driver is fixed), set NANOCHAT_SKIP_WORKAROUNDS=1")
+        compile_mode = "default"
+
 user_config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
 
