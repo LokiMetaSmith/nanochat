@@ -886,7 +886,9 @@ class GPT(nn.Module):
 
             # Clone x to ensure we don't alias CUDAGraph static buffers when passing to the eager/graph-broken loss function
             x_loss_input = x.clone()
-            lm_loss = chunked_cross_entropy(x_loss_input, targets, self.lm_head, softcap=softcap, chunk_size=128, ignore_index=-1, reduction=loss_reduction)
+            # Clone targets as well, as suggested by user, to ensure no boundary leaks for CUDAGraphs
+            targets_loss_input = targets.clone()
+            lm_loss = chunked_cross_entropy(x_loss_input, targets_loss_input, self.lm_head, softcap=softcap, chunk_size=128, ignore_index=-1, reduction=loss_reduction)
 
             total_loss = lm_loss + action_loss
 

@@ -533,16 +533,39 @@ while True:
     # evaluate the gradient
     synchronize()
     t0 = time.time()
+
+    # Mark the beginning of a step for CUDAGraphs (required for reduce-overhead mode)
+    # This must be called before the model forward pass, and ideally once per optimization step (not per micro-step)
+    # However, if using gradient accumulation, it might need to be per micro-step if the graph is captured per micro-step.
+    # But usually CUDAGraphs captures the forward+backward.
+    # If we are doing accumulation, we run the graph multiple times.
+    # Standard practice is to mark step begin before *each* graph execution if inputs change?
+    # Actually, for `reduce-overhead`, the allocator resets at `mark_step_begin`.
+    # If we do it inside the loop, we reset the allocator every micro-step.
+    # If the backward pass of micro-step K relies on memory that gets reset by mark_step_begin of K+1...
+    # BUT we run forward+backward inside the loop.
+    # So micro-step K completes before K+1 starts.
+    # EXCEPT: The error "overwritten by a subsequent run" suggests K+1 overwrote K's buffers while K was still needing them?
+    # This only happens if there's async execution or pipelining.
+    # With `synchronize()` at the start of the *outer* loop, we are synced.
+    # But inside the loop, there is no sync.
+    # If CUDAGraphs queues K, then K+1...
+    # But `torch.compile` is not manual CUDAGraph capture (where we replay). It handles it.
+    # The error message explicitly says "call torch.compiler.cudagraph_mark_step_begin() before each model invocation".
+    # So it SHOULD be inside the loop.
+
+    # However, user suggested "Move the Step Marker" out?
+    # "If grad_accum_steps > 1, you are marking the beginning of a graph multiple times within a single logical update, which can confuse the allocator's static buffer management."
+    # Let's try moving it out.
+
+    if hasattr(torch.compiler, "cudagraph_mark_step_begin"):
+        torch.compiler.cudagraph_mark_step_begin()
+
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
             # Prepare targets (pad for vision + robotics if needed)
             # Total padding = vision_patches + robotics_tokens
             padding_len = num_vision_patches + num_robotics_tokens
-
-            # Mark the beginning of a step for CUDAGraphs (required for reduce-overhead mode)
-            # This must be called before the model forward pass
-            if hasattr(torch.compiler, "cudagraph_mark_step_begin"):
-                torch.compiler.cudagraph_mark_step_begin()
 
             if padding_len > 0:
                 # y shape is (B, max_seq_len)
