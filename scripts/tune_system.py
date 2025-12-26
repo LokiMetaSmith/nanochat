@@ -354,6 +354,7 @@ def main():
     parser.add_argument("--tune-hyperparams", action="store_true", help="Enable comprehensive hyperparameter tuning (LR, Sched, LoRA, Layers)")
     parser.add_argument("--try-all-variations", action="store_true", help="Force grid search for batch size/compile options even if config has them")
     parser.add_argument("--max-benchmark-steps", type=int, default=50, help="Maximum number of steps for loss benchmarks (default: 50)")
+    parser.add_argument("--skip-workarounds", action="store_true", help="Skip stability workarounds (e.g. on Strix Halo) to test driver fixes")
 
     args, unknown = parser.parse_known_args()
 
@@ -427,6 +428,11 @@ def main():
     if is_strix_halo:
         print("Detected Variant: Strix Halo (gfx1151)", flush=True)
 
+    # Handle Skip Workarounds
+    if args.skip_workarounds:
+        print("NOTE: Skipping stability workarounds (NANOCHAT_SKIP_WORKAROUNDS=1)", flush=True)
+        base_env["NANOCHAT_SKIP_WORKAROUNDS"] = "1"
+
     MINIMAL_VALIDATION = True
     if MINIMAL_VALIDATION:
         print("NOTE: Minimal validation enabled (eval_tokens reduced) to prevent timeouts.", flush=True)
@@ -491,21 +497,28 @@ def main():
         # We start with basic flags.
         # We also want to test PYTORCH_CUDA_ALLOC_CONF for memory optimization if desired or necessary.
         # Especially relevant for 24GB GPUs (RTX 3090) as per report.
-        base_env_configs = [{}]
+        # Use base_env as the starting point for all configs to preserve global overrides (like skip_workarounds)
+        base_env_configs = [base_env.copy()]
 
         # Test expandable_segments explicitly if not already in env
         # If we are on CUDA or ROCm
         if is_rocm or torch.cuda.is_available():
+            # Helper to merge overrides into base_env
+            def merge_env(overrides):
+                e = base_env.copy()
+                e.update(overrides)
+                return e
+
             base_env_configs = [
-                {}, # Default (typically expandable_segments:True in base_train unless overridden)
-                {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:False"}, # Disable
-                {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"},  # Force Enable
+                merge_env({}), # Default (typically expandable_segments:True in base_train unless overridden)
+                merge_env({"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:False"}), # Disable
+                merge_env({"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}),  # Force Enable
             ]
             if is_rocm:
                 # Also test HIP var
                  base_env_configs.extend([
-                     {"PYTORCH_HIP_ALLOC_CONF": "expandable_segments:False"},
-                     {"PYTORCH_HIP_ALLOC_CONF": "expandable_segments:True"},
+                     merge_env({"PYTORCH_HIP_ALLOC_CONF": "expandable_segments:False"}),
+                     merge_env({"PYTORCH_HIP_ALLOC_CONF": "expandable_segments:True"}),
                  ])
 
         env_configs = base_env_configs
