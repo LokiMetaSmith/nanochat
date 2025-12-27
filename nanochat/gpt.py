@@ -43,6 +43,7 @@ def _compute_loss_chunk(x_chunk, targets_chunk, lm_head, softcap, ignore_index, 
     logits_chunk = softcap * torch.tanh(logits_chunk / softcap)
     return F.cross_entropy(logits_chunk, targets_chunk, ignore_index=ignore_index, reduction=reduction)
 
+@torch.compiler.disable
 def chunked_cross_entropy(x, targets, lm_head, chunk_size=128, softcap=15.0, ignore_index=-1, reduction='mean'):
     # Flatten input and targets
     B, T, C = x.size()
@@ -875,12 +876,7 @@ class GPT(nn.Module):
             action_loss = self.robotics_interface.predict_action(last_hidden_state, target_action=action_targets)
             action_loss = action_loss * self.config.robotics_action_loss_weight
 
-        # Forward the lm_head (compute logits)
         softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
-        logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
-        logits = logits[..., :self.config.vocab_size] # slice to remove padding
-        logits = logits.float() # switch to fp32 for logit softcap and loss computation
-        logits = softcap * torch.tanh(logits / softcap) # squash the logits
 
         if targets is not None:
             # training mode: compute and return the loss
@@ -888,7 +884,11 @@ class GPT(nn.Module):
             if targets.size(1) != T:
                  print0(f"Target mismatch! Expected {T}, got {targets.size(1)}")
 
-            lm_loss = chunked_cross_entropy(x, targets, self.lm_head, softcap=softcap, chunk_size=128, ignore_index=-1, reduction=loss_reduction)
+            # Clone x to ensure we don't alias CUDAGraph static buffers when passing to the eager/graph-broken loss function
+            x_loss_input = x.clone()
+            # Clone targets as well, as suggested by user, to ensure no boundary leaks for CUDAGraphs
+            targets_loss_input = targets.clone()
+            lm_loss = chunked_cross_entropy(x_loss_input, targets_loss_input, self.lm_head, softcap=softcap, chunk_size=128, ignore_index=-1, reduction=loss_reduction)
 
             total_loss = lm_loss + action_loss
 
@@ -900,8 +900,11 @@ class GPT(nn.Module):
             return total_loss.clone()
         else:
             # inference: return logits AND action_pred if robotics enabled
-            logits = self.lm_head(x)
-            logits = softcap * torch.tanh(logits / softcap)
+            # Forward the lm_head (compute logits)
+            logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
+            logits = logits[..., :self.config.vocab_size] # slice to remove padding
+            logits = logits.float() # switch to fp32 for logit softcap and loss computation
+            logits = softcap * torch.tanh(logits / softcap) # squash the logits
 
             action_pred = None
             if self.config.use_robotics and self.robotics_interface is not None:

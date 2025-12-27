@@ -38,9 +38,14 @@ if torch.cuda.is_available() or (hasattr(torch.version, 'hip') and torch.version
         try:
             if shutil.which('rocminfo'):
                 result = subprocess.run(['rocminfo'], capture_output=True, text=True)
-                if 'gfx1151' in result.stdout and "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL" not in os.environ:
-                    print("AMD Strix Halo (gfx1151) detected. Enabling experimental Triton support.")
-                    os.environ["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"] = "1"
+                if 'gfx1151' in result.stdout:
+                    if "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL" not in os.environ:
+                        print("AMD Strix Halo (gfx1151) detected. Enabling experimental Triton support.")
+                        os.environ["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"] = "1"
+                    # Disable HIPBLASLT to avoid 'HIPBLAS_STATUS_NOT_SUPPORTED' warnings/fallbacks
+                    if "TORCH_BLAS_PREFER_HIPBLASLT" not in os.environ:
+                        print("Disabling HIPBLASLT for Strix Halo stability.")
+                        os.environ["TORCH_BLAS_PREFER_HIPBLASLT"] = "0"
         except Exception:
             pass
 
@@ -165,12 +170,20 @@ config_updates = get_config(config_keys)
 globals().update(config_updates)
 
 # Re-apply Strix Halo stability fix AFTER config load
-if is_strix_halo and compile_mode == "reduce-overhead":
-    # Allow advanced users to skip this workaround if they have a fixed driver
+if is_strix_halo and compile:
+    # CUDAGraphs (reduce-overhead) is fundamentally unstable on current gfx1151 drivers (see BUG_REPORT_STRIX_HALO.md).
+    # Even 'default' mode can be problematic if it tries to use Triton in ways unsupported by the APU memory model.
+    # However, 'default' usually works better than 'reduce-overhead'.
+    # For maximum safety, we might want to disable compile entirely, but let's try downgrading first.
+
     if os.environ.get("NANOCHAT_SKIP_WORKAROUNDS") != "1":
-        print("Downgrading compile_mode to 'default' for stability on Strix Halo.")
-        print("To override this and use reduce-overhead (e.g. if driver is fixed), set NANOCHAT_SKIP_WORKAROUNDS=1")
-        compile_mode = "default"
+        if compile_mode == "reduce-overhead":
+            print("Downgrading compile_mode to 'default' for stability on Strix Halo.")
+            compile_mode = "default"
+
+        # If 'default' also proves unstable (based on future reports), we could force compile=False here.
+        # print("Disabling torch.compile for stability on Strix Halo.")
+        # compile = False
 
 user_config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
@@ -528,16 +541,39 @@ while True:
     # evaluate the gradient
     synchronize()
     t0 = time.time()
+
+    # Mark the beginning of a step for CUDAGraphs (required for reduce-overhead mode)
+    # This must be called before the model forward pass, and ideally once per optimization step (not per micro-step)
+    # However, if using gradient accumulation, it might need to be per micro-step if the graph is captured per micro-step.
+    # But usually CUDAGraphs captures the forward+backward.
+    # If we are doing accumulation, we run the graph multiple times.
+    # Standard practice is to mark step begin before *each* graph execution if inputs change?
+    # Actually, for `reduce-overhead`, the allocator resets at `mark_step_begin`.
+    # If we do it inside the loop, we reset the allocator every micro-step.
+    # If the backward pass of micro-step K relies on memory that gets reset by mark_step_begin of K+1...
+    # BUT we run forward+backward inside the loop.
+    # So micro-step K completes before K+1 starts.
+    # EXCEPT: The error "overwritten by a subsequent run" suggests K+1 overwrote K's buffers while K was still needing them?
+    # This only happens if there's async execution or pipelining.
+    # With `synchronize()` at the start of the *outer* loop, we are synced.
+    # But inside the loop, there is no sync.
+    # If CUDAGraphs queues K, then K+1...
+    # But `torch.compile` is not manual CUDAGraph capture (where we replay). It handles it.
+    # The error message explicitly says "call torch.compiler.cudagraph_mark_step_begin() before each model invocation".
+    # So it SHOULD be inside the loop.
+
+    # However, user suggested "Move the Step Marker" out?
+    # "If grad_accum_steps > 1, you are marking the beginning of a graph multiple times within a single logical update, which can confuse the allocator's static buffer management."
+    # Let's try moving it out.
+
+    if hasattr(torch.compiler, "cudagraph_mark_step_begin"):
+        torch.compiler.cudagraph_mark_step_begin()
+
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
             # Prepare targets (pad for vision + robotics if needed)
             # Total padding = vision_patches + robotics_tokens
             padding_len = num_vision_patches + num_robotics_tokens
-
-            # Mark the beginning of a step for CUDAGraphs (required for reduce-overhead mode)
-            # This must be called before the model forward pass
-            if hasattr(torch.compiler, "cudagraph_mark_step_begin"):
-                torch.compiler.cudagraph_mark_step_begin()
 
             if padding_len > 0:
                 # y shape is (B, max_seq_len)
