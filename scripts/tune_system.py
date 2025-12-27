@@ -109,7 +109,7 @@ def run_benchmark(config_overrides: Dict[str, Any], env_vars: Dict[str, str], ba
             env=current_env,
             capture_output=True,
             text=True,
-            timeout=1200 # 20 minute timeout per run
+            timeout=3600 # 60 minute timeout per run to debug Strix Halo hangs
         )
 
         if result.returncode != 0:
@@ -256,8 +256,8 @@ def run_loss_benchmark(config_overrides: Dict[str, Any], env_vars: Dict[str, str
         start_time = time.time()
 
         while True:
-            # Check for timeout (1 hour)
-            if time.time() - start_time > 3600:
+            # Check for timeout (2 hours)
+            if time.time() - start_time > 7200:
                 process.kill()
                 print("Run timed out", flush=True)
                 save_history_entry(config_overrides, env_vars, float("inf"), "loss", "failed_timeout", steps)
@@ -492,6 +492,9 @@ def main():
             # We allow compile=True to be tested, specifically to investigate dynamic=True vs False
             compile_options = [True, False]
             compile_dynamic_options = [False, True]
+        # Enable verbose logging for debugging hangs
+        base_env["TORCH_COMPILE_DEBUG"] = "1"
+        base_env["TORCH_LOGS"] = "+dynamo"
 
         # Environment variable combinations
         # We start with basic flags.
