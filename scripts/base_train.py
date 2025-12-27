@@ -308,6 +308,15 @@ orig_model = model # original, uncompiled model, for saving raw model state_dict
 # Actually, let's just respect the flag. But if we are on ROCm, we might want to warn or default to False.
 # For now, let's just make it conditional.
 if compile:
+    # Ensure TF32 is enabled if on CUDA, to prevent Inductor warnings/perf loss
+    if device.type == "cuda" and torch.cuda.is_available():
+        if not torch.backends.cuda.matmul.allow_tf32:
+             print0("WARNING: TF32 was disabled. Enabling it now.")
+             torch.backends.cuda.matmul.allow_tf32 = True
+
+        # Ensure precision is high (redundant but safe)
+        torch.set_float32_matmul_precision("high")
+
     print0(f"compiling the model... (dynamic={compile_dynamic})...(mode={compile_mode})")
     model = torch.compile(model, dynamic=compile_dynamic, mode=compile_mode) # the inputs to model will never change shape so dynamic=False is safe
 num_params = sum(p.numel() for p in model.parameters())
