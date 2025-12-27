@@ -488,13 +488,18 @@ def main():
              pass
 
         if is_strix_halo:
-            print("NOTE: Strix Halo detected. Enabling dynamic=True/False investigation.", flush=True)
-            # We allow compile=True to be tested, specifically to investigate dynamic=True vs False
-            compile_options = [True, False]
-            compile_dynamic_options = [False, True]
-        # Enable verbose logging for debugging hangs
-        base_env["TORCH_COMPILE_DEBUG"] = "1"
-        base_env["TORCH_LOGS"] = "+dynamo"
+            # Strix Halo (gfx1151) CUDAGraphs stability workaround
+            # See BUG_REPORT_STRIX_HALO.md
+            if base_env.get("NANOCHAT_SKIP_WORKAROUNDS") != "1":
+                print("NOTE: Strix Halo detected. CUDAGraphs (compile=True) disabled due to stability issues.", flush=True)
+                compile_options = [False]
+                compile_dynamic_options = [False]
+            else:
+                print("NOTE: Strix Halo detected. Enabling dynamic=True/False investigation (Debug Mode).", flush=True)
+                compile_options = [True, False]
+                compile_dynamic_options = [False, True]
+                base_env["TORCH_COMPILE_DEBUG"] = "1"
+                base_env["TORCH_LOGS"] = "+dynamo"
 
         # Environment variable combinations
         # We start with basic flags.

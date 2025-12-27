@@ -170,12 +170,20 @@ config_updates = get_config(config_keys)
 globals().update(config_updates)
 
 # Re-apply Strix Halo stability fix AFTER config load
-if is_strix_halo and compile_mode == "reduce-overhead":
-    # Allow advanced users to skip this workaround if they have a fixed driver
+if is_strix_halo and compile:
+    # CUDAGraphs (reduce-overhead) is fundamentally unstable on current gfx1151 drivers (see BUG_REPORT_STRIX_HALO.md).
+    # Even 'default' mode can be problematic if it tries to use Triton in ways unsupported by the APU memory model.
+    # However, 'default' usually works better than 'reduce-overhead'.
+    # For maximum safety, we might want to disable compile entirely, but let's try downgrading first.
+
     if os.environ.get("NANOCHAT_SKIP_WORKAROUNDS") != "1":
-        print("Downgrading compile_mode to 'default' for stability on Strix Halo.")
-        print("To override this and use reduce-overhead (e.g. if driver is fixed), set NANOCHAT_SKIP_WORKAROUNDS=1")
-        compile_mode = "default"
+        if compile_mode == "reduce-overhead":
+            print("Downgrading compile_mode to 'default' for stability on Strix Halo.")
+            compile_mode = "default"
+
+        # If 'default' also proves unstable (based on future reports), we could force compile=False here.
+        # print("Disabling torch.compile for stability on Strix Halo.")
+        # compile = False
 
 user_config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
