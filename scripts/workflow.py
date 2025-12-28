@@ -146,11 +146,14 @@ def main():
 
     # Training Sequence
     # Helper for torchrun
-    def torchrun(module, *cmd_args):
+    def torchrun(module, *cmd_args, include_config=True):
         cmd = [
             "torchrun", "--standalone", f"--nproc_per_node={nproc}",
-            "-m", module, config_file
-        ] + list(cmd_args)
+            "-m", module,
+        ]
+        if include_config:
+            cmd.append(config_file)
+        cmd.extend(cmd_args)
         run_command(cmd)
 
     # 1. Base Train
@@ -163,7 +166,7 @@ def main():
     # base_eval args in tinyrun: -- --max-per-task=16
     # base_eval args in speedrun: (none)
     eval_args = ["--", "--max-per-task=16"] if args.job == "tiny" else []
-    torchrun("scripts.base_eval", *eval_args)
+    torchrun("scripts.base_eval", *eval_args, include_config=False)
 
     # 4. Identity Data
     print("Ensuring identity data...")
@@ -173,13 +176,13 @@ def main():
     torchrun("scripts.mid_train", f"--run={wandb_run}")
 
     # 6. Chat Eval (Mid)
-    torchrun("scripts.chat_eval", "--", "-i", "mid")
+    torchrun("scripts.chat_eval", "--", "-i", "mid", include_config=False)
 
     # 7. Chat SFT
     torchrun("scripts.chat_sft", f"--run={wandb_run}")
 
     # 8. Chat Eval (SFT)
-    torchrun("scripts.chat_eval", "--", "-i", "sft")
+    torchrun("scripts.chat_eval", "--", "-i", "sft", include_config=False)
 
     # Report
     run_command([sys.executable, "-m", "nanochat.report", "generate"])
