@@ -171,7 +171,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--hf-path', type=str, default=None, help='HuggingFace model path to evaluate')
     parser.add_argument('--max-per-task', type=int, default=-1, help='Max examples per task to evaluate (-1 = disable)')
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
+
+    # Check for unexpected arguments, but tolerate config files or separators
+    for arg in unknown:
+        if arg == '--' or arg.endswith('.json'):
+            continue
+        print0(f"Warning: Unknown argument passed to base_eval.py: {arg}")
 
     # distributed / precision setup
     device_type = autodetect_device_type()

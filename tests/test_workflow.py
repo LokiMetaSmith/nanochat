@@ -22,7 +22,7 @@ class TestWorkflow(unittest.TestCase):
 
         # Simulate CLI args
         with patch('argparse.ArgumentParser.parse_known_args',
-                   return_value=(argparse.Namespace(job='tiny', tune_optimizer=False, tune_lr=False, tune_hyperparams=False, try_all_variations=False), [])):
+                   return_value=(argparse.Namespace(job='tiny', tune_optimizer=False, tune_lr=False, tune_hyperparams=False, try_all_variations=False, skip_workarounds=False), [])):
             workflow.main()
 
         # Verify calls
@@ -51,7 +51,7 @@ class TestWorkflow(unittest.TestCase):
 
         # Simulate CLI args
         with patch('argparse.ArgumentParser.parse_known_args',
-                   return_value=(argparse.Namespace(job='speed', tune_optimizer=False, tune_lr=False, tune_hyperparams=False, try_all_variations=False), [])):
+                   return_value=(argparse.Namespace(job='speed', tune_optimizer=False, tune_lr=False, tune_hyperparams=False, try_all_variations=False, skip_workarounds=False), [])):
             workflow.main()
 
         # Verify calls
