@@ -147,6 +147,21 @@ def load_hf_model(hf_path: str, device):
 # -----------------------------------------------------------------------------
 def main():
     import argparse
+    import sys
+
+    # Pre-parse sys.argv to remove potential config file if it's passed as a positional arg
+    # This happens when workflow.py passes the config file but we want to ignore it
+    # We remove the first argument if it ends with .json and is not a flag
+    if len(sys.argv) > 1 and sys.argv[1].endswith('.json') and not sys.argv[1].startswith('-'):
+        print0(f"Ignoring config file argument: {sys.argv[1]}")
+        del sys.argv[1]
+
+    # Also remove independent '--' separator if present, as it might have been passed by workflow.py
+    # to separate the config file from other args, but since we removed the config, the separator is dangling
+    # and might confuse argparse if it expects flags afterwards
+    if len(sys.argv) > 1 and sys.argv[1] == '--':
+        del sys.argv[1]
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--hf-path', type=str, default=None, help='HuggingFace model path to evaluate')
     parser.add_argument('--max-per-task', type=int, default=-1, help='Max examples per task to evaluate (-1 = disable)')
