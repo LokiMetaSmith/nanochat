@@ -195,7 +195,13 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
     parser.add_argument('-x', '--max-problems', type=int, default=None, help='Max problems to evaluate')
     parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps'], help='Device type for evaluation: cuda|cpu|mps. empty => autodetect')
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
+
+    # Check for unexpected arguments, but tolerate config files or separators
+    for arg in unknown:
+        if arg == '--' or arg.endswith('.json'):
+            continue
+        print0(f"Warning: Unknown argument passed to chat_eval.py: {arg}")
 
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
