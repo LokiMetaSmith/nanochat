@@ -150,24 +150,6 @@ def main():
     import sys
     import os
 
-    # Robustly find and remove config file if it's passed as a positional arg
-    # This happens when workflow.py passes the config file but we want to ignore it
-    to_remove = []
-    for i, arg in enumerate(sys.argv):
-        if i == 0: continue # Skip script name
-        # If we find a config file
-        if arg.endswith('.json') and not arg.startswith('-'):
-            print0(f"Ignoring config file argument: {arg}")
-            to_remove.append(i)
-            # Check if the next argument is the separator '--'
-            if i + 1 < len(sys.argv) and sys.argv[i+1] == '--':
-                to_remove.append(i+1)
-            break # Only remove the first config file found
-
-    # Remove indices in reverse order to maintain validity of earlier indices
-    for i in sorted(to_remove, reverse=True):
-        del sys.argv[i]
-
     parser = argparse.ArgumentParser()
     parser.add_argument('--hf-path', type=str, default=None, help='HuggingFace model path to evaluate')
     parser.add_argument('--max-per-task', type=int, default=-1, help='Max examples per task to evaluate (-1 = disable)')
