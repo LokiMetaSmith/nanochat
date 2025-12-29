@@ -297,7 +297,6 @@ class Engine:
             # Prepare logits for next iteration
             ids = torch.tensor(token_column, dtype=torch.long, device=device).unsqueeze(1)
             logits = self.model.forward(ids, kv_cache=kv_cache_decode) # (B, 1, vocab_size)
-
             # Handle tuple output again
             if isinstance(logits, tuple):
                 logits = logits[0]
