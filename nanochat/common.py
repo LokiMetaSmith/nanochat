@@ -113,7 +113,7 @@ def print_banner():
     """
     print0(banner)
 
-def is_ddp():
+def is_ddp_requested() -> bool:
     """
     Robustly detect if we are running in a Distributed Data Parallel (DDP) environment.
     Checks for the existence of key environment variables set by torchrun or similar launchers.
@@ -140,9 +140,19 @@ def is_ddp():
 
     return True
 
+# Alias for backward compatibility if needed, though upstream uses is_ddp_requested now
+is_ddp = is_ddp_requested
+
+def is_ddp_initialized() -> bool:
+    """
+    True if torch.distributed is available and the process group is initialized.
+    Used at cleanup to avoid destroying a non-existent PG.
+    """
+    return dist.is_available() and dist.is_initialized()
+
 def get_dist_info():
-    if is_ddp():
-        # is_ddp() now guarantees these exist and are valid integers (for numeric ones)
+    if is_ddp_requested():
+        # is_ddp_requested() now guarantees these exist and are valid integers (for numeric ones)
         ddp_rank = int(os.environ['RANK'])
         ddp_local_rank = int(os.environ['LOCAL_RANK'])
         ddp_world_size = int(os.environ['WORLD_SIZE'])
@@ -198,8 +208,8 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
         # print0(f"Precision set: float32_matmul_precision=high, allow_tf32={torch.backends.cuda.matmul.allow_tf32}")
 
     # Distributed setup: Distributed Data Parallel (DDP), optional, and requires CUDA
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
-    if ddp:
+    is_ddp_requested_val, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
+    if is_ddp_requested_val:
         if device_type == "cuda":
             device = torch.device("cuda", ddp_local_rank)
             torch.cuda.set_device(device)  # make "cuda" default to this device
@@ -226,11 +236,11 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
     if ddp_rank == 0:
         logger.info(f"Distributed world size: {ddp_world_size}")
 
-    return ddp, ddp_rank, ddp_local_rank, ddp_world_size, device
+    return is_ddp_requested_val, ddp_rank, ddp_local_rank, ddp_world_size, device
 
 def compute_cleanup():
     """Companion function to compute_init, to clean things up before script exit"""
-    if is_ddp() and dist.is_initialized():
+    if is_ddp_initialized():
         dist.destroy_process_group()
 
 class DummyWandb:
