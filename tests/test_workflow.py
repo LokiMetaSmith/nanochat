@@ -37,6 +37,7 @@ class TestWorkflow(unittest.TestCase):
 
         # Check torchrun calls
         self.assertTrue(any("scripts.base_train" in c and "configs/tiny.json" in c for c in calls))
+        # We removed the manual '--' separator from eval_args in workflow.py
         self.assertTrue(any("scripts.base_eval" in c and "--max-per-task=16" in c for c in calls))
 
     @patch('scripts.workflow.run_command')

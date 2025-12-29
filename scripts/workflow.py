@@ -163,9 +163,11 @@ def main():
     torchrun("scripts.base_loss")
 
     # 3. Base Eval
-    # base_eval args in tinyrun: -- --max-per-task=16
+    # base_eval args in tinyrun: --max-per-task=16
     # base_eval args in speedrun: (none)
-    eval_args = ["--", "--max-per-task=16"] if args.job == "tiny" else []
+    eval_args = ["--max-per-task=16"] if args.job == "tiny" else []
+    # Note: explicitly passing include_config=False ensures config file is NOT added,
+    # but depending on python arg parsing of *eval_args, we must be careful.
     torchrun("scripts.base_eval", *eval_args, include_config=False)
 
     # 4. Identity Data
