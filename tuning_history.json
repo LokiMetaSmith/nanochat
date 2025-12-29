@@ -1,6 +1,6 @@
 [
   {
-    "timestamp": 1766977672.6000624,
+    "timestamp": 1766980412.9908712,
     "config": {},
     "env": {},
     "metric_value": 3.5,
@@ -9,7 +9,7 @@
     "steps": 3
   },
   {
-    "timestamp": 1766977672.6026182,
+    "timestamp": 1766980412.9942646,
     "config": {
       "device_batch_size": 4
     },

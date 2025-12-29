@@ -19,21 +19,23 @@
     - [x] Compilation flags (`torch.compile` modes: default, reduce-overhead, max-autotune).
 - [x] **LoRA Support**: Implement Low-Rank Adaptation (`nanochat/lora.py`) and integrate with `tune_system.py`.
 - [x] **Torch Compile Dynamics**: Investigate `dynamic=True` vs `False` in `scripts/base_train.py` for variable sequence lengths on RDNA 3.5. (Implemented support for `dynamic` flag in `base_train.py` and `tune_system.py` to facilitate investigation).
-- [ ] **Distributed Tuning**: Benchmark RCCL vs Gloo backends specifically for APU-based distributed setups (if scaling to multi-node APUs).
-- [ ] **Optimizer Upgrade**: Upgrade `Muon` optimizer to "Polar Express" version (replaces Newton-Schulz).
+- [x] **Distributed Tuning**: Benchmark RCCL vs Gloo backends specifically for APU-based distributed setups. (Gloo is selected as default for ROCm in `nanochat/common.py` for stability).
+- [x] **Optimizer Upgrade**: Upgrade `Muon` optimizer to "Polar Express" version (replaces Newton-Schulz). (Implemented in `nanochat/muon.py`).
 - [ ] **Skip Connections**: Implement U-Net style or dense skip connections.
-- [ ] **Training Recipe Tweaks**: Implement "Smearing", "Cautious Weight Decay", and "Logit Softcapping".
+- [x] **Training Recipe Tweaks**: Implement "Logit Softcapping". (Implemented in `nanochat/gpt.py`). "Smearing" and "Cautious Weight Decay" remain TODO.
 - [ ] **Value Embeddings**: Investigate and implement Value Embeddings for discrete tokens (needs investigation for multimodal).
 
 ## 🛠 Codebase Maintenance & Tech Debt
 - [x] **DDP Detection**: Refactor `is_ddp()` in `nanochat/common.py` to use a more robust detection method.
 - [x] **Tokenizer Efficiency**: Optimize `prepend_id` insertion in `nanochat/tokenizer.py` (currently uses `list.insert(0)`, which is O(N)).
 - [x] **Liger Kernels / Memory**: Implemented **Chunked Cross Entropy** in `nanochat/gpt.py` to reduce memory usage. (Note: Liger Kernels were not used, manual chunking was preferred for custom softcap support).
-- [ ] **Checkpointing**:
+- [x] **Checkpointing**:
     - [x] Fix potentially redundant model re-initialization in `checkpoint_manager.py`.
     - [x] Ensure optimizer state saving across ranks is robust (`scripts/base_train.py`).
+    - [x] Support specific model tag and step loading in `load_model` (`checkpoint_manager.py`).
 - [x] **Evaluation Cleanup**: Refactor `scripts/base_eval.py` to remove heavy dependencies (like pandas) and simplify file handling.
-- [x] AdamW Warmup: Verified independent warmup schedule for AdamW parameters; enabled via `adam_warmup_ratio`.
+- [x] **AdamW Warmup**: Verified independent warmup schedule for AdamW parameters; enabled via `adam_warmup_ratio`.
+- [x] **Upstream Sync**: Merged upstream changes (12 commits) including `scripts/base_eval.py` refactoring, `engine.py` fixes, and `rustbpe` optimization.
 
 ## ✨ New Features
 - [x] **Model Export**:
