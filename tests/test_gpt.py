@@ -22,7 +22,9 @@ def test_gpt_config_defaults():
 
 def test_gpt_init(gpt_config_small):
     model = GPT(gpt_config_small)
-    assert model.transformer.wte.weight.shape == (100, 32)
+    # The vocabulary size is padded to be divisible by 64 in GPT.__init__
+    # 100 rounded up to multiple of 64 is 128
+    assert model.transformer.wte.weight.shape == (128, 32)
     assert len(model.transformer.h) == 2
     # Check rotary buffers
     assert hasattr(model, 'cos')
@@ -32,6 +34,7 @@ def test_gpt_forward_inference(gpt_config_small):
     model = GPT(gpt_config_small)
     idx = torch.randint(0, 100, (2, 8)) # B=2, T=8
     logits, action_pred = model(idx)
+    # The output logits are sliced back to original vocabulary size (100) in forward inference path
     assert logits.shape == (2, 8, 100)
     assert action_pred is None
 
