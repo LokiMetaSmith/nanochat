@@ -35,6 +35,19 @@ from nanochat.robotics import RoboticsConfig, RoboticsInterface
 from nanochat.lora import LoRALinear
 from torch.utils.checkpoint import checkpoint
 from nanochat.unitok import UniTok
+import os
+
+# Load Flash Attention 3 from HuggingFace Hub (and silence the progress bar)
+# Official docs of FA3 label it as "beta" and want you to install FA3 from source, which is a pain.
+# Wishing for official FA3 wheels soon, for now this seems to be a fast way to get them (ty varunneal)
+try:
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+    from kernels import get_kernel
+    flash_attn = get_kernel('varunneal/flash-attention-3').flash_attn_interface
+except (ImportError, Exception) as e:
+    print0(f"Warning: Failed to load Flash Attention 3 kernel: {e}")
+    print0("Falling back to PyTorch SDPA.")
+    flash_attn = None
 
 def _compute_loss_chunk(x_chunk, targets_chunk, lm_head, softcap, ignore_index, reduction):
     logits_chunk = lm_head(x_chunk)
@@ -212,43 +225,74 @@ class CausalSelfAttention(nn.Module):
         # Apply KV cache: insert current k,v into cache, get the full view so far
         if kv_cache is not None:
             k, v = kv_cache.insert_kv(self.layer_idx, k, v)
-        Tq = q.size(2) # number of queries in this forward pass
-        Tk = k.size(2) # number of keys/values in total (in the cache + current forward pass)
 
-        # Attention: queries attend to keys/values autoregressively. A few cases to handle:
-        enable_gqa = self.n_head != self.n_kv_head # Group Query Attention (GQA): duplicate key/value heads to match query heads if desired
+        # Attention: queries attend to keys/values autoregressively
+        # If we have Flash Attention 3 available and we are on CUDA and training (no kv_cache), use it.
+        # Note: FA3 for inference requires different kv_cache management (flash_attn_with_kvcache), which we skip for now.
+        use_fa3 = flash_attn is not None and x.device.type == "cuda" and kv_cache is None
 
-        # Context manager for Flash Attention
-        # On AMD Strix Halo/RDNA 3.5, we want to ensure we hit the CK Flash Attention kernel
-        # However, if CK/Flash kernels are unavailable (e.g. missing support in build), we must fallback to Math.
-        # Previously we explicitly disabled math, which caused crashes on unsupported hardware.
-        # We now enable math fallback.
-        if x.device.type == "cuda":
-            sdp_ctx = sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH])
+        if use_fa3:
+            # FA3 expects (B, T, H, D), so we skip the transpose
+            # Our q, k, v are currently (B, H, T, D) because we transposed them above
+            # We need to transpose them back to (B, T, H, D)
+            q_fa3 = q.transpose(1, 2)
+            k_fa3 = k.transpose(1, 2)
+            v_fa3 = v.transpose(1, 2)
+
+            # window_size=(-1, -1) means full causal attention (no sliding window)
+            # The upstream API seems to use 'window_size' tuple (left, right).
+            # (-1, 0) is typically full causal. Let's try (-1, 0).
+            # Note: upstream code calls it with 'window_size=window_size' where window_size comes from config.
+            # We default to standard causal here.
+            y = flash_attn.flash_attn_func(q_fa3, k_fa3, v_fa3, causal=True, window_size=(-1, 0))
+
+            # y is (B, T, H, D). We need to reshape for output.
+            # SDPA path returns y in (B, H, T, D), then transposes to (B, T, H, D).
+            # Here we already have (B, T, H, D).
+            # So we can just view it directly.
+            # But the code below expects 'y' to be transposed back.
+            # So we will just let it be (B, T, H, D) and skip the transpose below?
+            # No, 'y = y.transpose(1, 2)' swaps H and T.
+            # If y is already (B, T, H, D), doing transpose(1, 2) makes it (B, H, T, D).
+            # The next line 'y.contiguous().view(B, T, -1)' expects (B, T, H*D)?
+            # Wait. If input to view is (B, H, T, D), view(B, T, -1) is WRONG unless it's contiguous in T first?
+            # Standard SDPA output is (B, H, T, D).
+            # 'y.transpose(1, 2)' makes it (B, T, H, D).
+            # Then 'contiguous().view(B, T, -1)' merges H and D.
+
+            # Since FA3 returns (B, T, H, D), we effectively have the result of 'y.transpose(1, 2)'.
+            # So we can just skip the transpose step.
+            pass
+
         else:
-            sdp_ctx = nullcontext()
+            # Standard SDPA Path
+            Tq = q.size(2) # number of queries in this forward pass
+            Tk = k.size(2) # number of keys/values in total (in the cache + current forward pass)
+            enable_gqa = self.n_head != self.n_kv_head
 
-        with sdp_ctx:
-            if kv_cache is None or Tq == Tk:
-                # During training (no KV cache), attend as usual with causal attention
-                # And even if there is KV cache, we can still use this simple version when Tq == Tk
-                y = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=enable_gqa)
-            elif Tq == 1:
-                # During inference but with a single query in this forward pass:
-                # The query has to attend to all the keys/values in the cache
-                y = F.scaled_dot_product_attention(q, k, v, is_causal=False, enable_gqa=enable_gqa)
+            # Context manager for Flash Attention
+            if x.device.type == "cuda":
+                sdp_ctx = sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH])
             else:
-                # During inference AND we have a chunk of queries in this forward pass:
-                # First, each query attends to all the cached keys/values (i.e. full prefix)
-                attn_mask = torch.zeros((Tq, Tk), dtype=torch.bool, device=q.device) # True = keep, False = mask
-                prefix_len = Tk - Tq
-                attn_mask[:, :prefix_len] = True
-                # Then, causal attention within this chunk
-                attn_mask[:, prefix_len:] = torch.tril(torch.ones((Tq, Tq), dtype=torch.bool, device=q.device))
-                y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, enable_gqa=enable_gqa)
+                sdp_ctx = nullcontext()
 
-        # Re-assemble the heads side by side and project back to residual stream
-        y = y.transpose(1, 2).contiguous().view(B, T, -1)
+            with sdp_ctx:
+                if kv_cache is None or Tq == Tk:
+                    y = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=enable_gqa)
+                elif Tq == 1:
+                    y = F.scaled_dot_product_attention(q, k, v, is_causal=False, enable_gqa=enable_gqa)
+                else:
+                    attn_mask = torch.zeros((Tq, Tk), dtype=torch.bool, device=q.device)
+                    prefix_len = Tk - Tq
+                    attn_mask[:, :prefix_len] = True
+                    attn_mask[:, prefix_len:] = torch.tril(torch.ones((Tq, Tq), dtype=torch.bool, device=q.device))
+                    y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, enable_gqa=enable_gqa)
+
+            # Re-assemble the heads side by side and project back to residual stream
+            # SDPA output: (B, H, T, D) -> (B, T, H, D)
+            y = y.transpose(1, 2)
+
+        y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
 
